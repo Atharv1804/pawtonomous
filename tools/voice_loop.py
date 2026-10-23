@@ -315,12 +315,15 @@ def fast_path(text):
             seeing = json.loads(raw)["seeing"] if raw else []
         except ValueError:
             seeing = []
-        names = sorted({d["name"].capitalize() for d in seeing if d["name"] != "unknown"})
-        unknown = sum(1 for d in seeing if d["name"] == "unknown" and d["kind"] == "face")
+        owner = os.environ.get("PET_OWNER", "atharv")
         if not seeing:
             return "I don't see anyone right now."
-        parts = ([" and ".join(names)] if names else []) + (["%d person%s I don't know" % (unknown, "" if unknown == 1 else "s")] if unknown else [])
-        return "I can see " + (", and ".join(parts) if parts else "someone") + "."
+        others = sum(1 for d in seeing if d["kind"] == "face" and d["name"] != owner)
+        if any(d["name"] == owner for d in seeing):           # only the owner is ever named
+            return "I can see %s%s." % (owner.capitalize(), " and %d other %s" % (
+                others, "person" if others == 1 else "people") if others else "")
+        return "I can see %s, but not %s." % (
+            "%d %s" % (others, "person" if others == 1 else "people") if others else "someone", owner.capitalize())
     return None
 
 

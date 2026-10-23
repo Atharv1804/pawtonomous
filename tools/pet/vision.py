@@ -149,6 +149,8 @@ class FaceDB:
     def reload(self):
         people = {}
         for p in glob.glob(os.path.join(self.folder, "*.npz")):
+            if os.path.basename(p) == "friends.npz":         # the FriendBook's file, not a person
+                continue
             try:
                 people[os.path.basename(p)[:-4]] = np.load(p)["emb"]
             except (OSError, KeyError, ValueError):
