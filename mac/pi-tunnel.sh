@@ -8,4 +8,4 @@
 ssh -o BatchMode=yes -o ConnectTimeout=10 pi 'pkill -u "$(id -u)" -f "^sshd-session: atharv$"' 2>/dev/null
 sleep 1
 # 2) The link itself (forwards documented in CLAUDE.md "Current architecture").
-exec /usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -R 127.0.0.1:1080 -R 127.0.0.1:11434:127.0.0.1:11434 -R 127.0.0.1:1234:127.0.0.1:1234 -R 127.0.0.1:8766:127.0.0.1:8766 -R 127.0.0.1:8768:127.0.0.1:8768 -L 127.0.0.1:18765:127.0.0.1:8765 -L 127.0.0.1:18767:127.0.0.1:8767 -L 127.0.0.1:18642:127.0.0.1:8642 pi 
+exec /usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=10 -R 127.0.0.1:1080 -R 127.0.0.1:11434:127.0.0.1:11434 -R 127.0.0.1:1234:127.0.0.1:1234 -R 127.0.0.1:8766:127.0.0.1:8766 -R 127.0.0.1:8768:127.0.0.1:8768 -L 127.0.0.1:18765:127.0.0.1:8765 -L 127.0.0.1:18642:127.0.0.1:8642 pi 

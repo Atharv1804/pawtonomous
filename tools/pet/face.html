@@ -123,28 +123,30 @@ const C = () => getComputedStyle(document.documentElement).getPropertyValue("--e
 let localView = null, localViewAt = 0;          // a tap switches at once, before the brain confirms
 const view = () => (localView && Date.now() - localViewAt < 1500) ? localView : (state.view || "face");
 
-// Touch controls: view dot (bottom right), selfie dot (left of it), STOP while moving, SNAP in camera view.
+// Touch controls: view dot (bottom right), selfie dot (left of it), STOP while moving, BACK on a selfie.
 const MOVING = ["follow", "follow_straight", "go_to", "find", "wander", "curious", "look_at"];
 function dotRect(W, H) { const r = Math.max(18, H * 0.035); return {x: W - r * 2.2, y: H - r * 2.2, r: r}; }
 function selfieDot(W, H) { const d = dotRect(W, H); return {x: d.x - d.r * 3.2, y: d.y, r: d.r * 0.8}; }
 function stopRect(W, H) { const w = W * 0.30, h = H * 0.13; return {x: (W - w) / 2, y: H * 0.03, w: w, h: h}; }
 function followRect(W, H) { const w = W * 0.20, h = H * 0.09; return {x: W * 0.02, y: H - h - H * 0.03, w: w, h: h}; }
-function snapRect(W, H) { const w = W * 0.30, h = H * 0.11; return {x: (W - w) / 2, y: H - h - H * 0.04, w: w, h: h}; }
+function backRect(W, H) { const w = W * 0.20, h = H * 0.11; return {x: W * 0.03, y: H * 0.04, w: w, h: h}; }
+const selfieTime = () => (state.anim && state.anim.name === "countdown") || !!state.photo;
 const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 let pressed = {name: "", at: 0};                           // brief visual feedback on a tap
 function post(path, body) { fetch(path, {method: "POST", body: JSON.stringify(body || {})}).catch(() => {}); }
 cv.addEventListener("pointerdown", (e) => {
   const W = cv.width, H = cv.height, s = devicePixelRatio, x = e.clientX * s, y = e.clientY * s;
   const d = dotRect(W, H), sd = selfieDot(W, H);
+  if (selfieTime() && inRect(x, y, backRect(W, H))) {          // BACK: no photo / close the photo
+    post("/demo", {action: "cancel"}); pressed = {name: "back", at: Date.now()};
+    state.anim = null; state.photo = 0; return;
+  }
   if (MOVING.includes(state.mode) && inRect(x, y, stopRect(W, H))) {
     post("/stop"); pressed = {name: "stop", at: Date.now()}; return;
   }
-  if (!MOVING.includes(state.mode) && view() === "face" && !state.photo && inRect(x, y, followRect(W, H))) {
+  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && inRect(x, y, followRect(W, H))) {
     post("/command", {mode: "follow_straight", target: "any", timeout: 180});   // same as "Hey Jarvis, follow me"
     pressed = {name: "follow", at: Date.now()}; return;
-  }
-  if (view() === "camera" && inRect(x, y, snapRect(W, H))) {
-    post("/demo", {action: "snap"}); pressed = {name: "snap", at: Date.now()}; return;
   }
   if (Math.hypot(x - sd.x, y - sd.y) < sd.r * 2.2) {
     post("/demo", {action: "selfie"}); pressed = {name: "selfie", at: Date.now()}; return;
@@ -168,7 +170,7 @@ function drawButtons(W, H) {
     g.fillStyle = hit ? "#e5484d" : "#ffffff"; g.font = font(0.07); g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("STOP", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
   }
-  if (!MOVING.includes(state.mode) && view() === "face" && !state.photo) {   // small FOLLOW ME button
+  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime()) {   // small FOLLOW ME button
     const r = followRect(W, H), hit = pressed.name === "follow" && Date.now() - pressed.at < 500;
     g.save(); g.globalAlpha = hit ? 1 : 0.75;
     g.strokeStyle = C(); g.lineWidth = 3; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3);
@@ -176,11 +178,12 @@ function drawButtons(W, H) {
     g.fillStyle = hit ? "#05070b" : C(); g.font = font(0.035); g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("FOLLOW ME", r.x + r.w / 2, r.y + r.h / 2 + 1); g.restore();
   }
-  if (view() === "camera") {                                  // camera view: snap & send to Telegram
-    const r = snapRect(W, H), hit = pressed.name === "snap" && Date.now() - pressed.at < 500;
-    g.save(); g.fillStyle = hit ? "#ffffff" : C(); roundRect(r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
-    g.fillStyle = "#05070b"; g.font = font(0.05); g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillText("SNAP & SEND", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
+  if (selfieTime()) {                                          // BACK: cancel the selfie
+    const r = backRect(W, H), hit = pressed.name === "back" && Date.now() - pressed.at < 500;
+    g.save(); g.fillStyle = hit ? "#ffffff" : "rgba(5,7,11,0.75)"; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
+    g.strokeStyle = "#ffffff"; g.lineWidth = 3; g.stroke();
+    g.fillStyle = hit ? "#05070b" : "#ffffff"; g.font = font(0.05); g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("< BACK", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
   }
 }
 function drawDot(W, H) {
@@ -193,22 +196,52 @@ function drawDot(W, H) {
   g.restore();
 }
 
-// full-screen annotated camera view (resized + annotated on the Mac)
+// Live camera: on the robot the page streams straight from the Pi's camera service (smooth, nothing goes
+// through the Mac); face boxes come from the Mac in /display. Elsewhere it falls back to Mac snapshots.
+const LIVE_URL = "http://127.0.0.1:8767/stream";
+const live = new Image(); let liveOn = false, liveOk = location.hostname === "127.0.0.1";
+live.onerror = () => { liveOk = false; liveOn = false; };
 const full = new Image(); let fullLoading = false;
+const wantLive = () => view() === "camera" || (state.anim && state.anim.name === "countdown");
 setInterval(() => {
-  if (view() !== "camera" || fullLoading) return;
-  fullLoading = true;
+  const want = wantLive();
+  if (liveOk && want !== liveOn) {                    // open the stream only while it is on screen
+    liveOn = want; live.src = want ? LIVE_URL + "?t=" + Date.now() : "";
+  }
+  if (!want || liveOk || fullLoading) return;
+  fullLoading = true;                                 // fallback: one annotated picture at a time
   const img = new Image();
   img.onload = () => { full.src = img.src; fullLoading = false; };
   img.onerror = () => { fullLoading = false; };
-  img.src = "/frame.jpg?annotated=1&w=800&t=" + Date.now();
-}, 160);
+  img.src = "/frame.jpg?annotated=1&w=640&t=" + Date.now();
+}, 150);
+function drawLive(W, H) {                             // returns false if there is no picture yet
+  const src = liveOk ? live : full;
+  if (!src.naturalWidth) return false;
+  const s = Math.min(W / src.naturalWidth, H / src.naturalHeight), w = src.naturalWidth * s, h = src.naturalHeight * s;
+  const x0 = (W - w) / 2, y0 = (H - h) / 2;
+  g.drawImage(src, x0, y0, w, h);
+  if (liveOk) {
+    g.save(); g.lineWidth = Math.max(3, H * 0.006);
+    g.font = "bold " + Math.round(H * 0.05) + "px -apple-system, Roboto, sans-serif"; g.textBaseline = "bottom";
+    for (const b of state.boxes || []) {
+      const color = b.owner ? "#50dc50" : "#ffaa00";
+      const bx = x0 + b.x * w, by = y0 + b.y * h, bw = b.w * w, bh = b.h * h;
+      g.strokeStyle = color; g.lineWidth = b.kind === "face" ? Math.max(3, H * 0.006) : 1.5;
+      g.strokeRect(bx, by, bw, bh);
+      if (b.kind !== "face") continue;
+      const tw = g.measureText(b.label).width + 16, th = H * 0.06;
+      const ty = by - th < H * 0.08 ? by : by - th;   // under the header bar: put the label inside the box
+      g.fillStyle = color; g.fillRect(bx, ty, tw, th);
+      g.fillStyle = "#000000"; g.fillText(b.label, bx + 8, ty + th - 4);
+    }
+    g.restore();
+  }
+  return true;
+}
 function drawFullCamera(W, H) {
   g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
-  if (full.width) {
-    const s = Math.min(W / full.width, H / full.height), w = full.width * s, h = full.height * s;
-    g.drawImage(full, (W - w) / 2, (H - h) / 2, w, h);
-  }
+  drawLive(W, H);
   g.save();
   g.font = "bold " + Math.round(H * 0.04) + "px -apple-system, Roboto, sans-serif";
   g.textBaseline = "top"; g.fillStyle = "rgba(5,7,11,0.65)"; g.fillRect(0, 0, W, H * 0.075);
@@ -234,12 +267,17 @@ function drawPaw(W, H, t) {
   g.fillText(state.anim && state.anim.text ? state.anim.text : "Hi!", W / 2, H * 0.9); g.restore();
 }
 
-function drawCountdown(W, H) {
+function drawCountdown(W, H) {                        // selfie: the live picture it is about to take + 3-2-1
   const a = state.anim, left = Math.ceil(a.until - (Date.now() / 1000 + clockOffset));
-  g.save(); g.fillStyle = "rgba(5,7,11,0.55)"; g.fillRect(0, 0, W, H);
-  g.fillStyle = C(); g.textAlign = "center"; g.textBaseline = "middle";
-  g.font = "bold " + Math.round(H * 0.5) + "px -apple-system, Roboto, sans-serif";
-  g.fillText(String(Math.max(1, left)), W / 2, H / 2);
+  g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
+  const shown = drawLive(W, H);
+  g.save(); g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = shown ? "rgba(255,255,255,0.55)" : C();
+  g.font = "bold " + Math.round(H * 0.4) + "px -apple-system, Roboto, sans-serif";
+  g.fillText(String(Math.min(3, Math.max(1, left))), W / 2, H / 2);
+  g.font = "bold " + Math.round(H * 0.07) + "px -apple-system, Roboto, sans-serif";
+  g.fillStyle = "rgba(5,7,11,0.6)"; g.fillRect(0, H * 0.86, W, H * 0.14);
+  g.fillStyle = C(); g.fillText("Say cheese!", W / 2, H * 0.93);
   g.restore();
 }
 
@@ -322,8 +360,9 @@ function frame(ts) {
 
   const W = cv.width, H = cv.height;
   const anim = state.anim && state.anim.name;
-  if (state.photo) { drawSelfie(W, H); drawDot(W, H); requestAnimationFrame(frame); return; }
+  if (state.photo) { drawSelfie(W, H); drawButtons(W, H); requestAnimationFrame(frame); return; }
   if (anim === "flash") { g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H); requestAnimationFrame(frame); return; }
+  if (anim === "countdown") { drawCountdown(W, H); drawButtons(W, H); requestAnimationFrame(frame); return; }
   if (view() === "camera" && !anim) { drawFullCamera(W, H); drawDot(W, H); requestAnimationFrame(frame); return; }
   g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
   if (anim === "paw_wave") { drawPaw(W, H, ts); drawDot(W, H); requestAnimationFrame(frame); return; }
@@ -334,7 +373,6 @@ function frame(ts) {
   mouth(W / 2, H * 0.74 + bob, ew * 2.2, eh * 0.45, ts);
   drawCam(W, H);
   drawZzz(W, H, ts);
-  if (anim === "countdown") drawCountdown(W, H);
   drawDot(W, H);
   // status line: what the robot is doing right now
   const status = state.status || "";

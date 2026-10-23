@@ -141,6 +141,8 @@ class Brain:
         self.view = "face"                               # "face" or "camera" (full-screen annotated feed)
         self.photo = {"until": 0.0, "id": 0}              # selfie on screen
         self.selfie_jpg = b""
+        self.selfie_cancel = threading.Event()            # BACK on the screen / STOP: no photo
+        self.frame_wh = (640, 480)
         self.ptt = {"on": False, "since": 0.0}            # push-to-talk from the phone remote
         self.last_heard = {"text": "", "t": 0.0}
 
@@ -222,7 +224,24 @@ class Brain:
                     "photo": self.photo["id"] if now < self.photo["until"] else 0,
                     "friends": self.perception.friends.count(),
                     "faces": sum(1 for d in dets if d.kind == "face"),
-                    "owner_here": any(d.name == vision.OWNER for d in dets)}
+                    "owner_here": any(d.name == vision.OWNER for d in dets),
+                    "boxes": self.screen_boxes(now)}
+
+    def screen_boxes(self, now):
+        """Face boxes for the robot screen, which shows the Pi's own camera feed and draws these on top
+        (0..1 coordinates). Only the owner is named; everyone else is "?"."""
+        if now - self.dets_stamp > 1.0:
+            return []
+        w, h = self.frame_wh
+        out = []
+        for kind, name, x1, y1, x2, y2 in self.boxes:
+            owner = name == vision.OWNER
+            if kind != "face" and not owner:
+                continue
+            out.append({"kind": kind, "label": name.capitalize() if owner else "?", "owner": owner,
+                        "x": round(x1 / w, 3), "y": round(y1 / h, 3),
+                        "w": round((x2 - x1) / w, 3), "h": round((y2 - y1) / h, 3)})
+        return out
 
     # ---------- commands ----------
     def resolve_name(self, target):
@@ -250,6 +269,8 @@ class Brain:
         return {"ok": True, "mode": mode, "target": target or ""}
 
     def stop(self):
+        if self.anim["name"] == "countdown":
+            self.cancel_photo()                          # STOP during "Say cheese" = no photo
         with self.lock:
             self.ctrl.stop(time.time())
         self.exploring_until = 0.0
@@ -333,6 +354,7 @@ class Brain:
             now = time.time()
             with self.lock:
                 self.dets, self.boxes, self.dets_stamp = dets, boxes, now
+                self.frame_wh = (img.shape[1], img.shape[0])
                 for d in dets:
                     if d.name != "unknown":
                         self._maybe_greet(d.name, now)
@@ -407,8 +429,19 @@ class Brain:
             time.sleep(0.1)
         self.body.drive(0.0, 0.0)
 
+    def cancel_photo(self):
+        """BACK during "Say cheese": no photo is taken; BACK on a shown photo closes it."""
+        self.selfie_cancel.set()
+        with self.lock:
+            if self.anim["name"] in ("countdown", "flash"):
+                self.anim = {"name": "", "until": 0.0}
+            self.photo["until"] = 0.0
+        return {"ok": True, "cancelled": True}
+
     def trick(self, name):
         """Run one trick in the background so the voice loop is free at once (and can say stop)."""
+        if name == "cancel":
+            return self.cancel_photo()
         if name == "snap":
             threading.Thread(target=self._trick_snap, daemon=True).start()
             return {"ok": True, "trick": name}
@@ -459,10 +492,13 @@ class Brain:
 
     def _trick_selfie(self):
         self.view = "face"
+        self.selfie_cancel.clear()
+        self.set_anim("countdown", 3.8)                  # the screen shows the live camera + 3-2-1 + BACK
         self.say("Say cheese!")
-        time.sleep(0.8)
-        self.set_anim("countdown", 3.0)
-        time.sleep(3.0)
+        if self.selfie_cancel.wait(3.8):
+            self.say("Okay, no photo.")
+            self.event({"selfie": "cancelled"})
+            return
         img, stamp = self.camera.latest()
         if img is None:
             self.say("Oops, I can't see right now.")
@@ -767,7 +803,7 @@ def make_handler(brain):
                     return self._send(200, {"ok": True})
                 if url.path == "/demo":
                     action = str(p.get("action", ""))
-                    if not hasattr(brain, "_trick_" + action) and action not in ("view_camera", "view_face"):
+                    if not hasattr(brain, "_trick_" + action) and action not in ("view_camera", "view_face", "cancel"):
                         return self._send(400, {"ok": False, "error": "unknown trick %r" % action})
                     return self._send(200, brain.trick(action))
                 if url.path == "/view":                      # the dot on the screen toggles this
@@ -808,7 +844,7 @@ REMOTE_ACTIONS = {   # button -> what the brain does
     "explore": ("command", {"mode": "curious", "timeout": 120}),
     "stop": ("stop", None),
     "greet": ("demo", "greet"), "bye": ("demo", "bye"), "sit": ("demo", "sit"), "treat": ("demo", "treat"),
-    "selfie": ("demo", "selfie"), "snap": ("demo", "snap"),
+    "selfie": ("demo", "selfie"), "cancel": ("demo", "cancel"),
     "view_camera": ("demo", "view_camera"), "view_face": ("demo", "view_face"),
 }
 

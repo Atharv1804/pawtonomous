@@ -2,7 +2,7 @@
 
 About 5 minutes. **Bold** = say it out loud to Jarvis (always start with "Hey Jarvis", then wait for the chime).
 *Italics* = what you do. > Quotes = what you say to the judges.
-Keep your **iPhone in your hand or pocket**: it is a second microphone, as well as the MacBook.
+Keep your **iPhone in your hand**: open the Jarvis Remote, tap **TALK**, speak, tap **DONE**. Its buttons are a backup for every trick.
 
 ---
 
@@ -90,7 +90,6 @@ Keep your **iPhone in your hand or pocket**: it is a second microphone, as well 
 > up at the top, 'friends met'. He stores a face *signature*, not a photo, so camera images never leave
 > this desk. And because he runs on Hermes Agent, he has long-term memory for our conversations too."
 
-*Tap **SNAP & SEND** at the bottom:* > "And with one tap, that's on my phone." *(flash, sent to Telegram)*
 *Tap the dot again to go back to his face.*
 
 ## 8. What was hard
@@ -102,7 +101,8 @@ Keep your **iPhone in your hand or pocket**: it is a second microphone, as well 
 
 ## 9. Selfie
 *Hold him at arm's length, both of you in view:* **"Hey Jarvis, take a selfie."**
-*(or tap the small ring next to the dot)* *("Say cheese!", 3-2-1, the photo appears on his screen)*
+*(or tap the small ring next to the dot)* *("Say cheese!": his screen shows what he is about to photograph, 3-2-1,
+then the photo. Tap **< BACK** during the countdown to cancel.)*
 
 > "And because he runs on Hermes Agent, that selfie is already on my phone, in Telegram."
 *(show your phone)*
@@ -127,8 +127,7 @@ Keep your **iPhone in your hand or pocket**: it is a second microphone, as well 
 | sit | sit | – |
 | treat | here's your treat | – |
 | camera view | show them what you see | dot (bottom right) |
-| photo to Telegram | – | SNAP & SEND (in camera view) |
-| selfie | take a selfie | small ring next to the dot |
+| selfie | take a selfie | small ring next to the dot (< BACK cancels) |
 
 ## If something goes wrong
 - **He doesn't react:** say it again closer to your iPhone or the MacBook, and wait for the chime.
