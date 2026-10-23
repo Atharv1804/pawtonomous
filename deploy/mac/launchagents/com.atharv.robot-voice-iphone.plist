@@ -18,6 +18,8 @@
 		<string>pi_io</string>
 		<key>VOICE_MAC_MIC</key>
 		<string>Atharv Microphone</string>
+		<key>VOICE_PTT</key>
+		<string>1</string>
 		<key>VOICE_WHO</key>
 		<string>iphone</string>
 	</dict>

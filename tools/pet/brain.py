@@ -19,6 +19,7 @@ HTTP on 127.0.0.1:8766 only (not reachable from the network):
 
 import base64
 import difflib
+import hmac
 import json
 import random
 import os
@@ -66,7 +67,9 @@ GREETING = "Hi everyone, I'm Jarvis, Atharv's pet! It's really nice to meet you 
 GOODBYE = "Bye everyone! Thank you for meeting me!"
 DEMO_LINES = [GOODBYE, GREETING, "Yummy! Thank you!", "Say cheese!", "Got it! Sending it to Atharv's Telegram.",
               "Following you!", "Okay, stopping."]
-TELEGRAM_FILE = os.path.expanduser("~/robot_ws/.telegram_bot")   # TELEGRAM_BOT_TOKEN=..., TELEGRAM_ALLOWED_USERS=...
+TELEGRAM_FILE = os.path.expanduser("~/robot_ws/.telegram_bot")
+REMOTE_PORT = int(os.environ.get("PET_REMOTE_PORT", "8770"))      # phone remote, reachable on the WiFi
+REMOTE_TOKEN_FILE = os.path.expanduser("~/robot_ws/.remote_token")  # secret part of the remote's URL   # TELEGRAM_BOT_TOKEN=..., TELEGRAM_ALLOWED_USERS=...
 VISION_HZ = float(os.environ.get("PET_VISION_HZ", "8"))   # 8/s tracks people fine and leaves CPU for voice
 cv2.setNumThreads(int(os.environ.get("PET_CV_THREADS", "2")))
 
@@ -138,6 +141,8 @@ class Brain:
         self.view = "face"                               # "face" or "camera" (full-screen annotated feed)
         self.photo = {"until": 0.0, "id": 0}              # selfie on screen
         self.selfie_jpg = b""
+        self.ptt = {"on": False, "since": 0.0}            # push-to-talk from the phone remote
+        self.last_heard = {"text": "", "t": 0.0}
 
     # ---------- events / speech / display ----------
     def event(self, ev):
@@ -678,6 +683,10 @@ def make_handler(brain):
                 return self._send(200, {"ok": True})
             if url.path == "/state":
                 return self._send(200, brain.state())
+            if url.path == "/ptt":
+                if brain.ptt["on"] and time.time() - brain.ptt["since"] > 25:   # forgotten: auto-off
+                    brain.ptt = {"on": False, "since": time.time()}
+                return self._send(200, {"on": brain.ptt["on"]})
             if url.path == "/display":
                 return self._send(200, brain.display())
             if url.path == "/faces":
@@ -749,6 +758,13 @@ def make_handler(brain):
                         brain.voice_status = {"text": str(p.get("text", ""))[:60],
                                               "until": time.time() + float(p.get("seconds", 10))}
                     return self._send(200, {"ok": True})
+                if url.path == "/ptt":
+                    on = bool(p.get("on"))
+                    brain.ptt = {"on": on, "since": time.time()}
+                    return self._send(200, {"ok": True, "on": on})
+                if url.path == "/heard":
+                    brain.last_heard = {"text": str(p.get("text", ""))[:200], "t": time.time()}
+                    return self._send(200, {"ok": True})
                 if url.path == "/demo":
                     action = str(p.get("action", ""))
                     if not hasattr(brain, "_trick_" + action) and action not in ("view_camera", "view_face"):
@@ -774,9 +790,104 @@ def make_handler(brain):
     return H
 
 
+def remote_token():
+    """Secret for the phone remote URL (created once, kept in a git-ignored file)."""
+    try:
+        return open(REMOTE_TOKEN_FILE).read().strip()
+    except OSError:
+        import secrets
+        tok = secrets.token_urlsafe(9)
+        with open(REMOTE_TOKEN_FILE, "w") as f:
+            f.write(tok)
+        os.chmod(REMOTE_TOKEN_FILE, 0o600)
+        return tok
+
+
+REMOTE_ACTIONS = {   # button -> what the brain does
+    "follow": ("command", {"mode": "follow_straight", "target": "any", "timeout": 180}),
+    "explore": ("command", {"mode": "curious", "timeout": 120}),
+    "stop": ("stop", None),
+    "greet": ("demo", "greet"), "bye": ("demo", "bye"), "sit": ("demo", "sit"), "treat": ("demo", "treat"),
+    "selfie": ("demo", "selfie"), "snap": ("demo", "snap"),
+    "view_camera": ("demo", "view_camera"), "view_face": ("demo", "view_face"),
+}
+
+
+def make_remote_handler(brain, token):
+    page = open(os.path.join(HERE, "remote.html"), "rb").read()
+    prefix = "/r/" + token
+
+    class R(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+
+        def log_message(self, *a):
+            pass
+
+        def _send(self, code, body, ctype="application/json"):
+            if not isinstance(body, bytes):
+                body = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _authorized(self):
+            path = urlparse(self.path).path
+            return hmac.compare_digest(path[:len(prefix)], prefix) and path[len(prefix):len(prefix) + 1] in ("", "/")
+
+        def do_GET(self):
+            if not self._authorized():
+                return self._send(404, {"ok": False})
+            sub = urlparse(self.path).path[len(prefix):]
+            if sub in ("", "/"):
+                return self._send(200, page, "text/html; charset=utf-8")
+            if sub == "/state":
+                now = time.time()
+                with brain.lock:
+                    st = {"status": brain.status_text(now), "mode": brain.ctrl.cmd.mode, "view": brain.view,
+                          "talk": brain.ptt["on"], "heard": brain.last_heard["text"],
+                          "heard_ago": round(now - brain.last_heard["t"], 1) if brain.last_heard["t"] else None,
+                          "friends": brain.perception.friends.count(),
+                          "owner_here": any(d.name == vision.OWNER for d in brain.dets) if now - brain.dets_stamp < 1 else False}
+                return self._send(200, st)
+            return self._send(404, {"ok": False})
+
+        def do_POST(self):
+            if not self._authorized():
+                return self._send(404, {"ok": False})
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                p = json.loads(self.rfile.read(n) or b"{}") if 0 < n < 4096 else {}
+            except ValueError:
+                p = {}
+            sub = urlparse(self.path).path[len(prefix):]
+            if sub == "/talk":
+                on = bool(p.get("on"))
+                brain.ptt = {"on": on, "since": time.time()}
+                return self._send(200, {"ok": True, "talk": on})
+            if sub == "/act":
+                kind, arg = REMOTE_ACTIONS.get(str(p.get("action", "")), (None, None))
+                if kind == "command":
+                    return self._send(200, brain.command(arg["mode"], arg["target"] if "target" in arg else "", arg["timeout"]))
+                if kind == "stop":
+                    return self._send(200, brain.stop())
+                if kind == "demo":
+                    return self._send(200, brain.trick(arg))
+                return self._send(400, {"ok": False, "error": "unknown action"})
+            return self._send(404, {"ok": False})
+
+    return R
+
+
 def main():
     brain = Brain()
     brain.start()
+    token = remote_token()
+    remote = ThreadingHTTPServer(("0.0.0.0", REMOTE_PORT), make_remote_handler(brain, token))
+    threading.Thread(target=remote.serve_forever, daemon=True).start()
+    log("phone remote on port %d (secret URL in %s)" % (REMOTE_PORT, REMOTE_TOKEN_FILE))
     server = ThreadingHTTPServer(("127.0.0.1", PORT), make_handler(brain))
     log("pet brain on http://127.0.0.1:%d (known faces: %s)" % (PORT, ", ".join(brain.db.names()) or "none"))
     server.serve_forever()

@@ -200,6 +200,30 @@ def record_utterance(mic, noise_floor):
             return np.concatenate(frames)
 
 
+PTT = os.environ.get("VOICE_PTT") == "1"   # this listener also obeys the phone remote's TALK button
+PTT_MAX_S = 20.0
+
+
+def ptt_on():
+    raw = robot_media._pet("GET", "/ptt", timeout=0.5)
+    try:
+        return bool(raw and json.loads(raw).get("on"))
+    except ValueError:
+        return False
+
+
+def record_ptt(mic):
+    """Push-to-talk: record from now until the remote's DONE (or PTT_MAX_S). No silence detection."""
+    frames, t0, n = [], time.time(), 0
+    while time.time() - t0 < PTT_MAX_S:
+        frames.append(mic.read())
+        n += 1
+        if n % 3 == 0 and not ptt_on():
+            break
+    robot_media._pet("POST", "/ptt", {"on": False}, timeout=0.5)
+    return np.concatenate(frames) if frames else None
+
+
 def transcribe(audio):
     """Mac GPU Whisper (accurate, keeps the Pi cool); falls back to the Pi's small model."""
     text, where = robot_media.stt(audio.astype(np.int16))
@@ -210,9 +234,14 @@ def transcribe(audio):
 WAKE_ONLY = re.compile(r"^\W*((hey|hi|ok|okay|a)\W+)?(jarvis|jarvi|travis|service)\W*$", re.I)
 
 
+PHANTOM = re.compile(r"^\W*(you|thank you|thanks for watching|thank you for watching)\W*$", re.I)
+
+
 def strip_wake(text):
     """Drop a leading 'hey jarvis' that leaked into the recording; '' if that was all."""
     if WAKE_ONLY.match(text or "") or not re.search(r"[A-Za-z]", text or ""):   # wake word or "!" (chime)
+        return ""
+    if PHANTOM.match(text):                             # what Whisper "hears" in silence
         return ""
     return re.sub(r"^\W*((hey|hi|ok|okay)\W+)?jarvis\W+", "", text or "", flags=re.I).strip()
 
@@ -347,12 +376,16 @@ def main():
     log("ready - say 'Hey Jarvis'")
     debug, n, loudest = bool(os.environ.get("VOICE_DEBUG")), 0, 0.0
 
+    frame_n = 0
     while True:
         f = mic.read()
+        frame_n += 1
         level = rms(f)
         if level < noise * 2:                         # learn room noise only from quiet frames,
             noise = 0.98 * noise + 0.02 * level       # so speech does not raise the bar for speech
         fired = wake.heard(f)
+        pushed = PTT and frame_n % 3 == 0 and ptt_on()   # TALK pressed on the phone remote
+        fired = fired or pushed
         if debug:                                     # VOICE_DEBUG=1: loudness + best wake score every 2 s
             n, loudest = n + 1, max(loudest, rms(f))
             if n % 25 == 0:
@@ -366,11 +399,14 @@ def main():
             log("wake word (the %s mic is handling it)" % json.loads(claim).get("holder"))
             wake.reset()
             continue
-        log("wake word")
-        face("listening", 15, "Listening...")
+        log("push-to-talk" if pushed else "wake word")
+        face("listening", 25 if pushed else 15, "Listening...")
         play(wake_wav)
-        mic.drain(CHIME_ECHO_S)
-        audio = record_utterance(mic, noise)
+        if pushed:
+            audio = record_ptt(mic)
+        else:
+            mic.drain(CHIME_ECHO_S)
+            audio = record_utterance(mic, noise)
         if audio is None:
             log("no speech after wake word")
             face("neutral", 0.1)
@@ -381,7 +417,8 @@ def main():
         face("thinking", 10, "Understanding...")
         t0 = time.time()
         text = strip_wake(transcribe(audio))
-        if not text:                                    # only the tail of "hey jarvis": keep listening
+        robot_media._pet("POST", "/heard", {"text": text}, timeout=0.5)   # shown on the phone remote
+        if not text and not pushed:                     # only the tail of "hey jarvis": keep listening
             log("heard only the wake word; listening again")
             audio = record_utterance(mic, noise)
             if audio is not None:
