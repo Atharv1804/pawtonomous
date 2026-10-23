@@ -104,18 +104,27 @@ def test_follow_any_locks_onto_first_known_person():
     assert control.pick_target([face("rahul", -5, 1.5)], c.cmd.target) is None and a.angular == 0
 
 
-def test_follow_straight_never_turns():
+def test_follow_me_follows_only_the_owner_and_steers():
     c = Controller(); c.set("follow_straight", "any", now=0)
-    a = c.step([face("atharv", 10, 2.5)], FAR, now=0.1, dt=0.1)
-    assert a.angular == 0 and a.linear > 0                       # ahead and far: drive straight
-    a = c.step([face("atharv", 35, 2.5)], FAR, now=0.2, dt=0.1)
-    assert a.angular == 0 and a.linear == 0                      # off to the side: stop, do not turn
+    a = c.step([face("atharv", 0, 2.5)], FAR, now=0.1, dt=0.1)
+    assert a.linear > 0 and a.angular == 0                       # ahead and far: straight on
+    a = c.step([face("atharv", 20, 2.5)], FAR, now=0.2, dt=0.1)
+    assert a.linear > 0 and a.angular < 0                        # owner drifts right: curve right
     a = c.step([face("atharv", 0, 0.8)], FAR, now=0.3, dt=0.1)
     assert a.linear == 0                                         # close enough: stop
-    a = c.step([], FAR, now=3.0, dt=0.1)
-    assert a.linear == 0 and a.angular == 0                      # lost: stand still, no search spin
+    a = c.step([face("unknown", 0, 2.5)], FAR, now=1.5, dt=0.1)
+    assert a.linear == 0 and a.angular == 0                      # only a stranger: stand still
     assert intents.parse("follow me straight")["mode"] == "follow_straight"
     assert intents.parse("follow me")["mode"] == "follow_straight"
+
+
+def test_follow_me_rides_through_short_detection_gaps():
+    c = Controller(); c.set("follow_straight", "any", now=0)
+    a1 = c.step([face("atharv", 0, 2.5)], FAR, now=0.1, dt=0.1)
+    a2 = c.step([], FAR, now=0.3, dt=0.1)                         # one missed frame: same command
+    assert (a2.linear, a2.angular) == (a1.linear, a1.angular)
+    a3 = c.step([], FAR, now=1.0, dt=0.1)                         # lost for longer: stop
+    assert a3.linear == 0 and a3.angular == 0
 
 
 def test_demo_tricks_tolerate_wording():
@@ -127,10 +136,3 @@ def test_demo_tricks_tolerate_wording():
         r = intents.parse(text)
         assert r and r["action"] == "demo" and r["demo"] == trick, text
     assert intents.parse("what do you see")["action"] == "see"
-
-
-def test_follow_straight_follows_nearest_body_from_behind():
-    c = Controller(); c.set("follow_straight", "any", now=0)
-    back = Detection(name="unknown", kind="person", bearing_deg=3, distance_m=2.5, score=0.6)
-    a = c.step([back], FAR, now=0.1, dt=0.1)
-    assert a.linear > 0 and a.angular == 0

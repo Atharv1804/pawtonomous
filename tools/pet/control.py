@@ -38,7 +38,11 @@ EXPLORE_CHUNK_S = 20.0
 
 DEFAULT_TIMEOUT = {"look_at": 30.0, "follow": 300.0, "go_to": 120.0, "find": 180.0, "wander": 60.0,
                    "follow_straight": 120.0, "curious": 300.0}
-OWNER_NAME = "atharv"         # preferred person for "follow me"
+OWNER_NAME = "atharv"         # the only person "follow me" follows
+FOLLOW_HOLD_S = 0.5           # owner briefly not detected: keep the last command this long (smooth)
+FOLLOW_DEADBAND_DEG = 6.0     # roughly ahead: drive straight
+FOLLOW_TURN_SCALE = 0.7       # gentler steering while also driving (heavy robot, weak right turns)
+FOLLOW_ALIGN_DEG = 30.0       # drive forward while the owner is within this angle, else turn first
 ANY_TARGETS = ("", "any", "anyone", "someone", "person", "me", "somebody")
 
 
@@ -197,18 +201,24 @@ class Controller:
                 c.phase, c.phase_started = "spin", now
             return Action(explore=True, expression="searching")
 
-        if c.mode == "follow_straight":                      # no turning at all
-            owner = [d for d in dets if d.name == OWNER_NAME]   # you, walking backwards facing it
-            if owner and is_any(c.target):
-                det = max(owner, key=lambda d: d.score)
-            if det is None and is_any(c.target) and dets:
-                # Walking away from the robot = it sees your BACK (no face): follow the nearest person
-                # body straight ahead instead of needing a recognised face.
-                ahead = [d for d in dets if abs(d.bearing_deg) <= DRIVE_ALIGN_DEG] or dets
-                det = min(ahead, key=lambda d: d.distance_m if d.distance_m is not None else 9.0)
-            if det is None:
-                return Action(expression="searching")
-            return Action(linear=approach_speed(det, center, FOLLOW_DIST_M), expression="focused")
+        if c.mode == "follow_straight":
+            # "Follow me" (demo): follow ONLY the owner, steering to stay behind them while driving.
+            # Not seen for a moment -> repeat the last command (no stutter); longer -> stop and wait.
+            owner = [d for d in dets if d.name == OWNER_NAME]
+            if not is_any(c.target):
+                owner = [d for d in dets if d.name.lower() == c.target.lower()] or owner
+            if not owner:
+                last = c.extra.get("last")
+                if last and c.last_seen is not None and now - c.last_seen < FOLLOW_HOLD_S:
+                    return Action(linear=last[0], angular=last[1], expression="focused")
+                c.extra["last"] = None
+                return Action(expression="searching")           # stand still until it sees you again
+            det = max(owner, key=lambda d: d.score)
+            c.last_seen, c.last_bearing = now, det.bearing_deg
+            w = 0.0 if abs(det.bearing_deg) < FOLLOW_DEADBAND_DEG else steer(det.bearing_deg) * FOLLOW_TURN_SCALE
+            lin = approach_speed(det, center, FOLLOW_DIST_M) if abs(det.bearing_deg) <= FOLLOW_ALIGN_DEG else 0.0
+            c.extra["last"] = (lin, w)
+            return Action(linear=lin, angular=w, expression="focused")
 
         if det is None:                                      # look_at / follow / go_to, target hidden
             return self._search(c, now, dt)
