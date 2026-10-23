@@ -25,7 +25,8 @@ MODELS = os.path.expanduser(os.environ.get("PET_MODELS", "~/robot_ws/models"))
 FACES_DIR = os.path.expanduser(os.environ.get("PET_FACES", "~/robot_ws/faces"))
 HFOV_DEG = float(os.environ.get("PET_CAMERA_HFOV", "70"))      # horizontal field of view (estimate)
 ROTATE = os.environ.get("PET_CAMERA_ROTATE", "none")            # none | cw90 | ccw90 | 180
-MATCH_THRESHOLD = float(os.environ.get("PET_FACE_MATCH", "0.363"))  # SFace cosine, OpenCV's recommended value
+MATCH_THRESHOLD = float(os.environ.get("PET_FACE_MATCH", "0.42"))   # SFace cosine; stricter than OpenCV's 0.363
+                                                                    # so other people are not called Atharv
 AUTO_LEARN_SCORE = 0.55     # confidently recognised on the robot's own camera -> keep that view too
 AUTO_LEARN_EVERY_S = 20.0   # ...at most this often per person (until MAX_VIEWS)
 MAX_VIEWS = 30
@@ -309,6 +310,14 @@ class Perception:
             dets.append(Detection(name=name, kind="face", bearing_deg=round(self._bearing(x + fw / 2, w), 1),
                                   distance_m=self._distance(fh, w, FACE_HEIGHT_M), score=round(sim, 2)))
             boxes.append(("face", name, x, y, x + fw, y + fh))
+        # Only ONE face can be the owner: keep the best match, everyone else becomes "unknown" ("?").
+        face_idx = [i for i, d in enumerate(dets) if d.kind == "face" and d.name == OWNER]
+        if len(face_idx) > 1:
+            best = max(face_idx, key=lambda i: dets[i].score)
+            for i in face_idx:
+                if i != best:
+                    dets[i].name = "unknown"
+                    boxes[i] = (boxes[i][0], "unknown") + tuple(boxes[i][2:])
         if strangers and any(d.name == OWNER for d in dets):  # met while the owner is here -> friend
             for emb in strangers:
                 if self.friends.meet(emb):
@@ -392,6 +401,8 @@ def annotate(img, boxes):
         if kind == "face":
             known = name != "unknown"
             color = (80, 220, 80) if known else (0, 170, 255)
+            known = name == OWNER                          # demo: only the owner gets a name, others "?"
+            color = (80, 220, 80) if known else (0, 170, 255)
             label = name.capitalize() if known else "?"
             cv2.rectangle(out, p1, p2, color, 3)
             scale = 0.9 if known else 1.3
@@ -400,8 +411,8 @@ def annotate(img, boxes):
             cv2.rectangle(out, (p1[0], ty - th - 6), (p1[0] + tw + 10, ty + 4), color, -1)
             cv2.putText(out, label, (p1[0] + 5, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 2)
         else:
-            color = (80, 220, 80) if name != "unknown" else (200, 160, 60)
+            color = (80, 220, 80) if name == OWNER else (200, 160, 60)
             cv2.rectangle(out, p1, p2, color, 1)
-            if name != "unknown":
+            if name == OWNER:
                 cv2.putText(out, name.capitalize(), (p1[0] + 4, p2[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     return out

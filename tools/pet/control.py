@@ -38,6 +38,7 @@ EXPLORE_CHUNK_S = 20.0
 
 DEFAULT_TIMEOUT = {"look_at": 30.0, "follow": 300.0, "go_to": 120.0, "find": 180.0, "wander": 60.0,
                    "follow_straight": 120.0, "curious": 300.0}
+OWNER_NAME = "atharv"         # preferred person for "follow me"
 ANY_TARGETS = ("", "any", "anyone", "someone", "person", "me", "somebody")
 
 
@@ -197,6 +198,9 @@ class Controller:
             return Action(explore=True, expression="searching")
 
         if c.mode == "follow_straight":                      # no turning at all
+            owner = [d for d in dets if d.name == OWNER_NAME]   # you, walking backwards facing it
+            if owner and is_any(c.target):
+                det = max(owner, key=lambda d: d.score)
             if det is None and is_any(c.target) and dets:
                 # Walking away from the robot = it sees your BACK (no face): follow the nearest person
                 # body straight ahead instead of needing a recognised face.

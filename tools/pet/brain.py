@@ -400,6 +400,9 @@ class Brain:
 
     def trick(self, name):
         """Run one trick in the background so the voice loop is free at once (and can say stop)."""
+        if name == "snap":
+            threading.Thread(target=self._trick_snap, daemon=True).start()
+            return {"ok": True, "trick": name}
         if name in ("view_camera", "view_face"):
             self.view = "camera" if name == "view_camera" else "face"
             self.set_expression("happy", 1.5)
@@ -469,6 +472,30 @@ class Brain:
         sent = self._telegram_photo(self.selfie_jpg, "Selfie from Jarvis 🐾")
         self.say("Got it! Sending it to Atharv's Telegram." if sent else "Got it! I saved our selfie.")
         self.event({"selfie": path, "telegram": sent})
+
+    def _capture(self, prefix):
+        img, stamp = self.camera.latest()
+        if img is None:
+            return None, ""
+        ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        folder = os.path.expanduser("~/robot_ws/captures")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "%s_%s.jpg" % (prefix, time.strftime("%Y%m%d_%H%M%S")))
+        with open(path, "wb") as f:
+            f.write(jpg.tobytes())
+        return jpg.tobytes(), path
+
+    def _trick_snap(self):
+        """Camera-view button: instant photo -> flash -> shown briefly -> straight to Telegram (no countdown)."""
+        jpg, path = self._capture("snap")
+        if jpg is None:
+            return
+        self.selfie_jpg = jpg
+        self.set_anim("flash", 0.3)
+        with self.lock:
+            self.photo = {"until": time.time() + 3.5, "id": self.photo["id"] + 1}
+        sent = self._telegram_photo(jpg, "Snapshot from Jarvis")
+        self.event({"snap": path, "telegram": sent})
 
     def _telegram_photo(self, jpg, caption):
         """Send a photo to the owner's Telegram straight from the Mac (its VPN reaches Telegram)."""

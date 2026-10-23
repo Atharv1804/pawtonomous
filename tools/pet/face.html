@@ -123,16 +123,55 @@ const C = () => getComputedStyle(document.documentElement).getPropertyValue("--e
 let localView = null, localViewAt = 0;          // a tap switches at once, before the brain confirms
 const view = () => (localView && Date.now() - localViewAt < 1500) ? localView : (state.view || "face");
 
+// Touch controls: view dot (bottom right), selfie dot (left of it), STOP while moving, SNAP in camera view.
+const MOVING = ["follow", "follow_straight", "go_to", "find", "wander", "curious", "look_at"];
 function dotRect(W, H) { const r = Math.max(18, H * 0.035); return {x: W - r * 2.2, y: H - r * 2.2, r: r}; }
+function selfieDot(W, H) { const d = dotRect(W, H); return {x: d.x - d.r * 3.2, y: d.y, r: d.r * 0.8}; }
+function stopRect(W, H) { const w = W * 0.30, h = H * 0.13; return {x: (W - w) / 2, y: H * 0.03, w: w, h: h}; }
+function snapRect(W, H) { const w = W * 0.30, h = H * 0.11; return {x: (W - w) / 2, y: H - h - H * 0.04, w: w, h: h}; }
+const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+let pressed = {name: "", at: 0};                           // brief visual feedback on a tap
+function post(path, body) { fetch(path, {method: "POST", body: JSON.stringify(body || {})}).catch(() => {}); }
 cv.addEventListener("pointerdown", (e) => {
-  const W = cv.width, H = cv.height, s = devicePixelRatio, d = dotRect(W, H);
-  const x = e.clientX * s, y = e.clientY * s;
+  const W = cv.width, H = cv.height, s = devicePixelRatio, x = e.clientX * s, y = e.clientY * s;
+  const d = dotRect(W, H), sd = selfieDot(W, H);
+  if (MOVING.includes(state.mode) && inRect(x, y, stopRect(W, H))) {
+    post("/stop"); pressed = {name: "stop", at: Date.now()}; return;
+  }
+  if (view() === "camera" && inRect(x, y, snapRect(W, H))) {
+    post("/demo", {action: "snap"}); pressed = {name: "snap", at: Date.now()}; return;
+  }
+  if (Math.hypot(x - sd.x, y - sd.y) < sd.r * 2.2) {
+    post("/demo", {action: "selfie"}); pressed = {name: "selfie", at: Date.now()}; return;
+  }
   if (Math.hypot(x - d.x, y - d.y) < d.r * 2.5) {           // generous hit area for a finger
     localView = view() === "camera" ? "face" : "camera"; localViewAt = Date.now();
-    fetch("/view", {method: "POST", body: JSON.stringify({view: localView})}).catch(() => {});
+    post("/view", {view: localView});
   }
 });
+function drawButtons(W, H) {
+  const sd = selfieDot(W, H);                                // small selfie dot: a tiny camera ring
+  g.save(); g.globalAlpha = pressed.name === "selfie" && Date.now() - pressed.at < 400 ? 1 : 0.6;
+  g.strokeStyle = C(); g.lineWidth = 3;
+  g.beginPath(); g.arc(sd.x, sd.y, sd.r, 0, Math.PI * 2); g.stroke();
+  g.beginPath(); g.arc(sd.x, sd.y, sd.r * 0.35, 0, Math.PI * 2); g.stroke();
+  g.restore();
+  const font = (k) => "bold " + Math.round(H * k) + "px -apple-system, Roboto, sans-serif";
+  if (MOVING.includes(state.mode)) {                          // big STOP while it is moving on its own
+    const r = stopRect(W, H), hit = pressed.name === "stop" && Date.now() - pressed.at < 500;
+    g.save(); g.fillStyle = hit ? "#ffffff" : "#e5484d"; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
+    g.fillStyle = hit ? "#e5484d" : "#ffffff"; g.font = font(0.07); g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("STOP", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
+  }
+  if (view() === "camera") {                                  // camera view: snap & send to Telegram
+    const r = snapRect(W, H), hit = pressed.name === "snap" && Date.now() - pressed.at < 500;
+    g.save(); g.fillStyle = hit ? "#ffffff" : C(); roundRect(r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
+    g.fillStyle = "#05070b"; g.font = font(0.05); g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("SNAP & SEND", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
+  }
+}
 function drawDot(W, H) {
+  drawButtons(W, H);
   const d = dotRect(W, H);
   g.save(); g.globalAlpha = 0.75;
   g.fillStyle = view() === "camera" ? "#ff5a5a" : C();
