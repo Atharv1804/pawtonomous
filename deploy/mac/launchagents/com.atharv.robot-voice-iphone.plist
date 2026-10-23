@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HERMES_API_KEY_FILE</key>
+		<string>/Users/atharv/robot_ws/.hermes_api_key</string>
+		<key>HERMES_API_URL</key>
+		<string>http://127.0.0.1:18642</string>
+		<key>MAC_AI_URL</key>
+		<string>http://127.0.0.1:8768</string>
+		<key>PET_URL</key>
+		<string>http://127.0.0.1:8766</string>
+		<key>PI_IO_URL</key>
+		<string>http://127.0.0.1:18767</string>
+		<key>ROBOT_SPEAK_VIA</key>
+		<string>pi_io</string>
+		<key>VOICE_MAC_MIC</key>
+		<string>Atharv Microphone</string>
+		<key>VOICE_WHO</key>
+		<string>iphone</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.atharv.robot-voice-iphone</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/atharv/robot_ws/mac/.venv/bin/python</string>
+		<string>-u</string>
+		<string>/Users/atharv/robot_ws/tools/voice_loop.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/atharv/robot_ws/logs/voice_iphone.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/atharv/robot_ws/logs/voice_iphone.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>

@@ -108,8 +108,12 @@ def test_follow_me_follows_only_the_owner_and_steers():
     c = Controller(); c.set("follow_straight", "any", now=0)
     a = c.step([face("atharv", 0, 2.5)], FAR, now=0.1, dt=0.1)
     assert a.linear > 0 and a.angular == 0                       # ahead and far: straight on
-    a = c.step([face("atharv", 20, 2.5)], FAR, now=0.2, dt=0.1)
-    assert a.linear > 0 and a.angular < 0                        # owner drifts right: curve right
+    a = c.step([face("atharv", 8, 2.5)], FAR, now=0.2, dt=0.1)
+    assert a.linear > 0 and a.angular == 0                       # small drift: stay in a straight line
+    for k in range(5):
+        a = c.step([face("atharv", 25, 2.5)], FAR, now=0.25 + k * 0.01, dt=0.1)
+    assert a.linear > 0 and a.angular < 0                        # owner moves right: gentle curve right
+    assert abs(a.angular) < control.MAX_TURN * 0.5
     a = c.step([face("atharv", 0, 0.8)], FAR, now=0.3, dt=0.1)
     assert a.linear == 0                                         # close enough: stop
     a = c.step([face("unknown", 0, 2.5)], FAR, now=1.5, dt=0.1)

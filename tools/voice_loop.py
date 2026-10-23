@@ -37,7 +37,7 @@ import robot_media  # noqa: E402  Piper voice + Whisper loader shared with the M
 import robot_power  # noqa: E402
 
 ON_MAC = sys.platform == "darwin"   # the same loop runs on the Mac (MacBook mic) and on the Pi (robot mic)
-WHO = "mac" if ON_MAC else "pi"
+WHO = os.environ.get("VOICE_WHO") or ("mac" if ON_MAC else "pi")   # e.g. "iphone" for a 2nd Mac listener
 RATE = 16000
 FRAME = 1280                      # 80 ms of 16 kHz int16 audio (what openWakeWord expects)
 FRAME_S = FRAME / RATE

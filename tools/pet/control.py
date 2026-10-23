@@ -40,9 +40,10 @@ DEFAULT_TIMEOUT = {"look_at": 30.0, "follow": 300.0, "go_to": 120.0, "find": 180
                    "follow_straight": 120.0, "curious": 300.0}
 OWNER_NAME = "atharv"         # the only person "follow me" follows
 FOLLOW_HOLD_S = 0.5           # owner briefly not detected: keep the last command this long (smooth)
-FOLLOW_DEADBAND_DEG = 6.0     # roughly ahead: drive straight
-FOLLOW_TURN_SCALE = 0.7       # gentler steering while also driving (heavy robot, weak right turns)
-FOLLOW_ALIGN_DEG = 30.0       # drive forward while the owner is within this angle, else turn first
+FOLLOW_DEADBAND_DEG = 12.0    # roughly ahead: drive dead straight (prefer straight lines)
+FOLLOW_TURN_SCALE = 0.35      # only gentle corrections while driving
+FOLLOW_ALIGN_DEG = 45.0       # keep driving (with a gentle correction) while the owner is within this angle
+FOLLOW_SMOOTH = 0.25          # steering low-pass: new = old + 0.25 * (target - old) -> no twitching
 ANY_TARGETS = ("", "any", "anyone", "someone", "person", "me", "somebody")
 
 
@@ -209,14 +210,26 @@ class Controller:
                 owner = [d for d in dets if d.name.lower() == c.target.lower()] or owner
             if not owner:
                 last = c.extra.get("last")
-                if last and c.last_seen is not None and now - c.last_seen < FOLLOW_HOLD_S:
+                seen = c.extra.get("owner_seen")             # the OWNER, not just any face
+                if last and seen is not None and now - seen < FOLLOW_HOLD_S:
                     return Action(linear=last[0], angular=last[1], expression="focused")
                 c.extra["last"] = None
                 return Action(expression="searching")           # stand still until it sees you again
             det = max(owner, key=lambda d: d.score)
             c.last_seen, c.last_bearing = now, det.bearing_deg
-            w = 0.0 if abs(det.bearing_deg) < FOLLOW_DEADBAND_DEG else steer(det.bearing_deg) * FOLLOW_TURN_SCALE
-            lin = approach_speed(det, center, FOLLOW_DIST_M) if abs(det.bearing_deg) <= FOLLOW_ALIGN_DEG else 0.0
+            c.extra["owner_seen"] = now
+            b = det.bearing_deg
+            if abs(b) <= FOLLOW_ALIGN_DEG:
+                # Straight line first: no steering inside the deadband, then a small, smoothed correction.
+                want = 0.0 if abs(b) < FOLLOW_DEADBAND_DEG else steer(b) * FOLLOW_TURN_SCALE
+                w = c.extra.get("w", 0.0) + FOLLOW_SMOOTH * (want - c.extra.get("w", 0.0))
+                if abs(w) < 0.03:
+                    w = 0.0
+                lin = approach_speed(Detection(det.name, det.kind, 0.0, det.distance_m, det.score), center, FOLLOW_DIST_M)
+            else:
+                # Owner far off to the side: stop and turn slowly toward them, then go straight again.
+                w, lin = steer(b) * 0.6, 0.0
+            c.extra["w"] = w
             c.extra["last"] = (lin, w)
             return Action(linear=lin, angular=w, expression="focused")
 
