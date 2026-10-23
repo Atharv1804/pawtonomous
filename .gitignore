@@ -1,0 +1,26 @@
+# --- secrets: never commit ---
+firmware/esp32_motor/secrets.h
+.robot_udp_key
+.hermes_api_key
+*.env
+.env*
+# --- private / personal ---
+CLAUDE.md
+faces/
+captures/
+logs/
+# --- large or generated ---
+models/
+*.onnx
+*.tflite
+*.hex
+*.bin
+build/
+install/
+log/
+.venv/
+mac/.venv/
+tools/.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store

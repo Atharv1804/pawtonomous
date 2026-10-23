@@ -1,0 +1,16 @@
+# Pi camera pass-through + speaker for the brain on the Mac (tools/pi_io.py). Install (no sudo):
+#   cp ~/robot_ws/tools/robot-io.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now robot-io
+[Unit]
+Description=Robot Pi I/O (camera stream, speaker) for the Mac brain
+After=pipewire.service
+
+[Service]
+ExecStart=%h/robot_ws/tools/.venv/bin/python -u %h/robot_ws/tools/pi_io.py
+StandardOutput=append:%h/robot_ws/logs/pi_io.log
+StandardError=append:%h/robot_ws/logs/pi_io.log
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

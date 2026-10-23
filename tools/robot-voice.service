@@ -1,0 +1,19 @@
+# "Hey Jarvis" voice loop. Install (on the Pi, no sudo):
+#   cp ~/robot_ws/tools/robot-voice.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now robot-voice
+# Logs: tail -f ~/robot_ws/logs/voice.log   (this Pi keeps no user journal)
+[Unit]
+Description=Robot voice: Hey Jarvis -> Hermes -> speaker
+After=pipewire.service wireplumber.service hermes-gateway.service
+
+[Service]
+ExecStart=%h/robot_ws/tools/.venv/bin/python -u %h/robot_ws/tools/voice_loop.py
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=HF_HUB_DISABLE_XET=1
+StandardOutput=append:%h/robot_ws/logs/voice.log
+StandardError=append:%h/robot_ws/logs/voice.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

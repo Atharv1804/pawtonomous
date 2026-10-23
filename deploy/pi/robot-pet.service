@@ -1,0 +1,17 @@
+# Pet brain: camera + face/person recognition + autonomous behaviours + face display server.
+# Install (on the Pi, no sudo):  cp ~/robot_ws/tools/robot-pet.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now robot-pet
+# Logs: tail -f ~/robot_ws/logs/pet.log      Face: http://127.0.0.1:8766/face
+[Unit]
+Description=Robot pet brain (vision, behaviours, face)
+After=pipewire.service
+
+[Service]
+ExecStart=%h/robot_ws/tools/.venv/bin/python -u %h/robot_ws/tools/pet/brain.py
+StandardOutput=append:%h/robot_ws/logs/pet.log
+StandardError=append:%h/robot_ws/logs/pet.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

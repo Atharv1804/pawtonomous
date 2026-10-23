@@ -1,0 +1,53 @@
+# Tunable settings for the base. Edit here instead of the code.
+# NOTE: write decimals for decimal settings (1.0, not 1) - ROS is strict about types.
+
+motor_bridge:
+  ros__parameters:
+    esp32_host: "192.168.0.211"   # ESP32 on "hello young" (mDNS .local does not resolve inside Docker)
+    esp32_port: 4210
+    udp_key_file: "/ws/.robot_udp_key"   # secret shared with the ESP32 (inside Docker /ws = ~/robot_ws)
+    max_linear: 0.4      # m/s that corresponds to max_pwm (calibrate later)
+    max_angular: 2.0     # rad/s that corresponds to max_pwm
+    max_pwm: 255         # full power: the robot is heavy
+    min_pwm: 210         # heavy robot: Atharv asked for more power (was 150, still too weak) 2026-10-23
+    send_rate_hz: 20.0
+    cmd_timeout: 0.5
+
+ultrasonic_bridge:
+  ros__parameters:
+    # By-id path = this exact Uno, whichever USB port it is in (plain /dev/ttyACM0 also works)
+    port: "/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_1344A47413035141A708-if00"
+    baud: 115200
+    max_range: 4.0
+    ignore_sensors: "center"   # 2026-10-23: centre sensor misreads (2-4 cm); Atharv chose to ignore it. "" = use all
+
+safety_reflex:
+  ros__parameters:
+    stop_center: 0.25
+    slow_center: 0.70
+    stop_side: 0.18
+    slow_side: 0.45
+    reverse_scale: 0.5
+    allow_blind_forward: false
+    cmd_timeout: 0.5
+    range_timeout: 0.5
+    max_noecho_s: 0.0     # off (2026-10-23): open rooms give long legit no-echo; sensors are wired. Data timeouts still apply
+
+behavior_node:
+  ros__parameters:
+    cruise_speed: 0.25    # m/s commanded
+    turn_speed: 1.2       # rad/s commanded
+    speed_gain: 0.5       # CALIBRATE: real speed / commanded speed (heavy robot: moves ~half as fast -> drives 2x longer)
+    turn_gain: 0.5        # CALIBRATE: real turn rate / commanded turn rate (heavy robot -> turns 2x longer)
+    avoid_center: 0.45
+    avoid_side: 0.28
+    stop_center: 0.30
+    stop_side: 0.20
+    max_noecho_s: 0.0     # off: see safety_reflex
+    rate_hz: 20.0
+
+agent_bridge:
+  ros__parameters:
+    bind_host: "127.0.0.1"   # "0.0.0.0" lets other computers call it - then you MUST set a token
+    port: 8765
+    token: ""                # or set the ROBOT_API_TOKEN environment variable

@@ -1,0 +1,14 @@
+# Animated robot face on the touchscreen (Chromium kiosk). Install (no sudo):
+#   cp ~/robot_ws/tools/robot-face.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now robot-face
+[Unit]
+Description=Robot face on the screen
+After=robot-pet.service
+
+[Service]
+ExecStart=%h/robot_ws/tools/face-kiosk.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

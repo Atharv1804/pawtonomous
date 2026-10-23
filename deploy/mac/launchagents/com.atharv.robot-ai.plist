@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HF_ENDPOINT</key>
+		<string>https://hf-mirror.com</string>
+		<key>HF_HUB_DISABLE_XET</key>
+		<string>1</string>
+		<key>MAC_AI_URL</key>
+		<string>http://127.0.0.1:8768</string>
+		<key>MAC_STT_MODEL</key>
+		<string>mlx-community/whisper-small.en-mlx</string>
+		<key>PET_CAMERA_URL</key>
+		<string>http://127.0.0.1:18767/stream</string>
+		<key>PET_CV_THREADS</key>
+		<string>4</string>
+		<key>PET_FACES</key>
+		<string>/Users/atharv/robot_ws/faces</string>
+		<key>PET_MODELS</key>
+		<string>/Users/atharv/robot_ws/models</string>
+		<key>PET_VISION_HZ</key>
+		<string>12</string>
+		<key>PI_IO_URL</key>
+		<string>http://127.0.0.1:18767</string>
+		<key>ROBOT_API_URL</key>
+		<string>http://127.0.0.1:18765</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.atharv.robot-ai</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/atharv/robot_ws/mac/.venv/bin/python</string>
+		<string>-u</string>
+		<string>/Users/atharv/robot_ws/mac/mac_ai.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/atharv/robot_ws/logs/mac_ai.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/atharv/robot_ws/logs/mac_ai.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>

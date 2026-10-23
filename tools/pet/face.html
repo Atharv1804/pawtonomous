@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis Face</title>
+<style>
+  :root { --bg: #05070b; --eye: #4fe3ff; --glow: rgba(79, 227, 255, 0.35); }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Robot face: polls the pet brain (/display) ~20x per second and animates smoothly in between.
+// Expressions: neutral happy curious focused searching sleepy sad surprised listening thinking.
+const cv = document.getElementById("c"), g = cv.getContext("2d");
+const SHAPES = {               // open: eye height 0..1, lid: inner-lid tilt (+ = angry/focused), smile: mouth curve
+  neutral:   {open: 1.0,  lid: 0.0,   smile: 0.25, pupil: 1.0},
+  happy:     {open: 0.75, lid: -0.1,  smile: 1.0,  pupil: 1.1, squint: 0.5},
+  curious:   {open: 1.1,  lid: -0.15, smile: 0.35, pupil: 1.15, tiltOne: 0.25},
+  focused:   {open: 0.8,  lid: 0.25,  smile: 0.1,  pupil: 0.9},
+  searching: {open: 1.0,  lid: 0.0,   smile: 0.15, pupil: 1.0, scan: 1},
+  sleepy:    {open: 0.3,  lid: 0.0,   smile: 0.1,  pupil: 0.9},
+  sad:       {open: 0.8,  lid: -0.35, smile: -0.6, pupil: 1.0},
+  surprised: {open: 1.3,  lid: 0.0,   smile: 0.0,  pupil: 0.7, o: 1},
+  listening: {open: 1.1,  lid: -0.1,  smile: 0.3,  pupil: 1.2},
+  thinking:  {open: 0.9,  lid: 0.1,   smile: 0.05, pupil: 1.0, lookUp: 1},
+};
+let state = {expression: "neutral", gaze_x: 0, talk: {envelope: [], step: 0.05, start: 0}, now: 0};
+let clockOffset = 0;                       // brain time - browser time
+let cur = Object.assign({gx: 0, gy: 0, mouth: 0, squint: 0, tiltOne: 0, o: 0, scan: 0, lookUp: 0}, SHAPES.neutral);
+// Blink as a small state machine: wait -> closing -> opening -> wait (3-7 s). The old version could
+// re-trigger while still opening, which chained into rapid double blinks.
+let blinkPhase = "wait", blinkAt = performance.now() + 3000, blink = 0;
+
+async function poll() {
+  try {
+    const r = await fetch("/display", {cache: "no-store"});
+    const s = await r.json();
+    clockOffset = s.now - Date.now() / 1000;
+    state = s;
+  } catch (e) { /* brain restarting: keep the last face */ }
+  setTimeout(poll, 80);
+}
+poll();
+
+function resize() { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; }
+addEventListener("resize", resize); resize();
+
+const lerp = (a, b, k) => a + (b - a) * k;
+
+function talkLevel() {
+  const t = state.talk || {};
+  const env = t.envelope || [];
+  const i = Math.floor((Date.now() / 1000 + clockOffset - t.start) / (t.step || 0.05));
+  return (i >= 0 && i < env.length) ? env[i] : 0;
+}
+
+function roundRect(x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  g.beginPath();
+  g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
+function eye(cx, cy, w, h, side, t) {
+  const open = Math.max(0.04, cur.open * (1 - blink) * (side < 0 ? 1 + cur.tiltOne : 1));
+  const eh = h * open;
+  g.save();
+  g.shadowColor = getComputedStyle(document.documentElement).getPropertyValue("--glow");
+  g.shadowBlur = w * 0.08;
+  g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--eye");
+  roundRect(cx - w / 2, cy - eh / 2, w, eh, Math.min(w, eh) * 0.35);
+  g.fill();
+  g.shadowBlur = 0;
+  // pupil (dark) follows the gaze
+  const pr = w * 0.17 * cur.pupil;
+  const px = cx + cur.gx * w * 0.22, py = cy + cur.gy * eh * 0.22;
+  if (eh > pr * 1.4) { g.fillStyle = "#05070b"; g.beginPath(); g.arc(px, py, pr, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "rgba(255,255,255,0.85)"; g.beginPath(); g.arc(px - pr * 0.35, py - pr * 0.35, pr * 0.28, 0, Math.PI * 2); g.fill(); }
+  // eyelids: tilted top lid (angry/focused or sad) and a cheek for happy squints
+  g.fillStyle = "#05070b";
+  const tilt = cur.lid * h * 0.5 * side;
+  g.beginPath();
+  g.moveTo(cx - w, cy - eh / 2 - h); g.lineTo(cx + w, cy - eh / 2 - h);
+  g.lineTo(cx + w * 0.6, cy - eh / 2 + Math.max(0, tilt)); g.lineTo(cx - w * 0.6, cy - eh / 2 + Math.max(0, -tilt));
+  g.closePath(); g.fill();
+  if (cur.squint > 0.02) {
+    g.beginPath(); g.ellipse(cx, cy + eh / 2 + h * 0.18, w * 0.75, h * 0.42 * cur.squint, 0, Math.PI, 0, true); g.fill();
+  }
+  g.restore();
+}
+
+function mouth(cx, cy, w, h, t) {
+  const level = cur.mouth;
+  g.save();
+  g.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--eye");
+  g.fillStyle = "#0b2a33";
+  g.lineWidth = Math.max(4, w * 0.045); g.lineCap = "round";
+  g.shadowColor = getComputedStyle(document.documentElement).getPropertyValue("--glow"); g.shadowBlur = w * 0.03;
+  if (cur.o > 0.5 && level < 0.05) {                  // surprised "o"
+    g.beginPath(); g.ellipse(cx, cy, w * 0.12, h * 0.35, 0, 0, Math.PI * 2); g.stroke();
+  } else if (level > 0.04) {                          // talking: open mouth sized by voice loudness
+    const mh = h * (0.15 + level * 0.85), mw = w * (0.55 + level * 0.15);
+    roundRect(cx - mw / 2, cy - mh / 2, mw, mh, mh * 0.5); g.fill(); g.stroke();
+  } else {                                            // closed: smile / frown curve
+    const s = cur.smile * h * 0.6;
+    g.beginPath(); g.moveTo(cx - w * 0.32, cy - s * 0.3);
+    g.quadraticCurveTo(cx, cy + s, cx + w * 0.32, cy - s * 0.3); g.stroke();
+  }
+  g.restore();
+}
+
+// Mini camera feed (picture-in-picture): shown only when the brain asks (remarks, every ~30 s exploring).
+const cam = new Image();
+let camLoading = false, camShown = false;
+function refreshCam() {
+  if (!state.camera || camLoading) return;
+  camLoading = true;
+  const img = new Image();
+  img.onload = () => { cam.src = img.src; camLoading = false; camShown = true; };
+  img.onerror = () => { camLoading = false; };
+  img.src = "/frame.jpg?annotated=1&w=320&t=" + Date.now();   // resized + annotated on the Mac
+}
+setInterval(refreshCam, 250);   // ~4 fps while visible: light on the Pi
+
+function drawCam(W, H) {
+  if (!state.camera || !camShown || !cam.width) return;
+  const w = W * 0.30, h = w * cam.height / cam.width, x = W - w - W * 0.02, y = H * 0.03;
+  g.save();
+  g.fillStyle = "rgba(79, 227, 255, 0.85)";
+  g.fillRect(x - 3, y - 3, w + 6, h + 6);
+  g.drawImage(cam, x, y, w, h);
+  const cap = state.camera.caption || "";
+  if (cap) {
+    g.font = Math.round(H * 0.035) + "px -apple-system, 'Segoe UI', Roboto, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "top";
+    g.fillStyle = "rgba(79, 227, 255, 0.95)";
+    g.fillText(cap, x + w / 2, y + h + 8);
+  }
+  g.restore();
+}
+
+let lastDraw = 0;
+function frame(ts) {
+  if (ts - lastDraw < 33) { requestAnimationFrame(frame); return; }   // ~30 fps keeps the Pi cool
+  lastDraw = ts;
+  const shape = SHAPES[state.expression] || SHAPES.neutral;
+  const k = 0.18;
+  for (const key of ["open", "lid", "smile", "pupil"]) cur[key] = lerp(cur[key], shape[key], k);
+  for (const key of ["squint", "tiltOne", "o", "scan", "lookUp"]) cur[key] = lerp(cur[key], shape[key] || 0, k);
+  // gaze: toward the tracked person; wander side to side while searching; up while thinking
+  let gx = state.gaze_x || 0;
+  if (cur.scan > 0.5) gx = Math.sin(ts / 600);
+  cur.gx = lerp(cur.gx, gx, 0.2);
+  cur.gy = lerp(cur.gy, cur.lookUp > 0.5 ? -0.8 : 0, 0.15);
+  cur.mouth = lerp(cur.mouth, talkLevel(), 0.5);
+  if (blinkPhase === "wait" && ts > blinkAt) blinkPhase = "closing";
+  if (blinkPhase === "closing") { blink = Math.min(1, blink + 0.34); if (blink >= 1) blinkPhase = "opening"; }
+  else if (blinkPhase === "opening") {
+    blink = Math.max(0, blink - 0.25);
+    if (blink === 0) { blinkPhase = "wait"; blinkAt = ts + 3000 + Math.random() * 4000; }
+  }
+
+  const W = cv.width, H = cv.height;
+  g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
+  const ew = Math.min(W * 0.22, H * 0.36), eh = ew * 1.15, gap = ew * 0.75;
+  const bob = Math.sin(ts / 1400) * H * 0.006;
+  eye(W / 2 - gap - ew / 2 + ew / 2, H * 0.40 + bob, ew, eh, -1, ts);
+  eye(W / 2 + gap + ew / 2 - ew / 2, H * 0.40 + bob, ew, eh, 1, ts);
+  mouth(W / 2, H * 0.74 + bob, ew * 2.2, eh * 0.45, ts);
+  drawCam(W, H);
+  // status line: what the robot is doing right now
+  const status = state.status || "";
+  if (status) {
+    g.save();
+    g.font = Math.round(H * 0.045) + "px -apple-system, 'Segoe UI', Roboto, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillStyle = "rgba(79, 227, 255, 0.85)";
+    g.fillText(status, W / 2, H * 0.93);
+    g.restore();
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
