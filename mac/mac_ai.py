@@ -43,15 +43,26 @@ def transcribe(pcm):
     return (r.get("text") or "").strip()
 
 
+_tts_cache = {}            # text -> WAV bytes: fixed demo lines play with no synthesis delay
+PREWARM = ["Bye everyone! Thank you for meeting me!", "Hi everyone, I'm Jarvis, Atharv's pet! It's really nice to meet you all!", "Yummy! Thank you!",
+           "Say cheese!", "Got it! Sending it to Atharv's Telegram.", "Got it! I saved our selfie.",
+           "Following you!", "Okay, stopping.", "Ooh, let's explore!", "Sorry, I didn't catch that."]
+
+
 def synthesize(text):
     global _voice
+    if text in _tts_cache:
+        return _tts_cache[text]
     from piper import PiperVoice
     if _voice is None:
         _voice = PiperVoice.load(VOICE)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         _voice.synthesize_wav(text, w)
-    return buf.getvalue()
+    wav = buf.getvalue()
+    if len(_tts_cache) < 300:
+        _tts_cache[text] = wav
+    return wav
 
 
 class H(BaseHTTPRequestHandler):
@@ -122,6 +133,7 @@ def keep_warm():
 
 def main():
     threading.Thread(target=keep_warm, daemon=True).start()
+    threading.Thread(target=lambda: [synthesize(t) for t in PREWARM], daemon=True).start()
     log("mac_ai on http://127.0.0.1:%d (stt %s)" % (PORT, STT_MODEL))
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
 

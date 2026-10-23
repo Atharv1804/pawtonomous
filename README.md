@@ -18,6 +18,11 @@ hardware you own (a Raspberry Pi 5 + a laptop). There are no paid APIs and no cl
 | "Hey Jarvis, come here" / "find Atharv" | finds the person (spin + explore) and drives to them |
 | "Hey Jarvis, go explore" | curious exploring: camera + small vision model pick the way, it slows near corners, stops to comment on things it finds ("Ooh, a big shiny ball!") and briefly shows its camera view on screen |
 | "Hey Jarvis, stop" | stops everything at once |
+| "Hey Jarvis, say hi to the judges" / "say bye" | a waving paw on screen + a spoken greeting (instant, pre-cached voice) |
+| "Hey Jarvis, sit" | a little shuffle, then closes its eyes |
+| "Hey Jarvis, here's your treat" | happy spinning eyes, "Yummy!", a happy step, then sleepy eyes |
+| "Hey Jarvis, show them what you see" (or tap the dot) | full-screen camera view: known faces named, strangers "?", friends-met counter |
+| "Hey Jarvis, take a selfie" | "Say cheese!", 3-2-1 countdown, shows the photo and sends it to the owner's Telegram |
 | Telegram: a photo + "this is Rahul, learn his face" | learns a face from ONE photo |
 | Telegram: "send me a picture of what you see" | sends a photo from the robot |
 | anything else | answered by the local LLM agent (Hermes + gpt-oss-20b) |
@@ -69,6 +74,7 @@ Driver VCC → ESP32 3V3, all grounds common, battery only on B+/B−.
 | `mac/mac_ai.py`, `mac/pi-tunnel.sh` | Mac speech service and the self-healing Mac↔Pi tunnel |
 | `deploy/` | systemd user services (Pi), launchd agents (Mac), audio fixes, Hermes settings + `SOUL.md` |
 | `docs/ROBOT_BRIEF.md` | what the agent knows about its own body |
+| `docs/PITCH.md` | the demo script and pitch |
 
 ## Setup (short version)
 1. **Firmware.** Flash `firmware/uno_ultrasonic` to the Uno. Copy `firmware/esp32_motor/secrets.h.example` to

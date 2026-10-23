@@ -281,6 +281,9 @@ def fast_path(text):
     it = intents.parse(text)
     if it is None:
         return None
+    if it["action"] == "demo":                          # pet tricks: the brain shows + says it all
+        r = robot_media._pet("POST", "/demo", {"action": it["demo"]}, timeout=2)
+        return "" if r is not None else "My brain is not running right now."
     if it["action"] == "pet":
         if it["mode"] == "idle":
             robot_media._pet("POST", "/stop", {}, timeout=2)
@@ -388,10 +391,13 @@ def main():
         if len(text) < 2:
             face("sad", 2, "Didn't catch that")
             robot_media.say("Sorry, I didn't catch that.")
-        elif quick:
-            log("fast path (%.2fs): %r" % (time.time() - t0, quick))
-            face("happy", 2, "")
-            robot_media.say(quick)
+        elif quick is not None:
+            log("fast path (%.2fs): %r" % (time.time() - t0, quick or "<trick>"))
+            if quick:                                   # tricks ("") speak and animate in the brain
+                face("happy", 2, "")
+                robot_media.say(quick)
+            else:
+                robot_media._pet("POST", "/status", {"text": "", "seconds": 0}, timeout=0.5)
         else:
             face("thinking", 60, "Thinking: \"%s\"" % (text[:40] + ("..." if len(text) > 40 else "")))
             if time.time() - last_turn > CONVERSATION_GAP_S:

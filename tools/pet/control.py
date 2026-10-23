@@ -170,8 +170,7 @@ class Controller:
             c.last_seen, c.last_bearing = now, det.bearing_deg
             # "follow me" / "any": lock onto the first KNOWN person picked, so the robot does not
             # switch to someone else who walks past mid-follow.
-            if is_any(c.target) and det.name != "unknown" and c.mode in ("follow", "go_to", "look_at",
-                                                                           "follow_straight"):
+            if is_any(c.target) and det.name != "unknown" and c.mode in ("follow", "go_to", "look_at"):
                 c.target = det.name
 
         if c.mode == "wander":
@@ -198,6 +197,11 @@ class Controller:
             return Action(explore=True, expression="searching")
 
         if c.mode == "follow_straight":                      # no turning at all
+            if det is None and is_any(c.target) and dets:
+                # Walking away from the robot = it sees your BACK (no face): follow the nearest person
+                # body straight ahead instead of needing a recognised face.
+                ahead = [d for d in dets if abs(d.bearing_deg) <= DRIVE_ALIGN_DEG] or dets
+                det = min(ahead, key=lambda d: d.distance_m if d.distance_m is not None else 9.0)
             if det is None:
                 return Action(expression="searching")
             return Action(linear=approach_speed(det, center, FOLLOW_DIST_M), expression="focused")

@@ -76,7 +76,8 @@ def test_pick_target_any_prefers_known_and_near():
 def test_intents():
     assert intents.parse("Hey Jarvis, stop!")["mode"] == "idle"
     assert intents.parse("come here")["mode"] == "go_to"
-    assert intents.parse("Follow me please")["mode"] == "follow"
+    assert intents.parse("Follow me please")["mode"] == "follow_straight"   # demo default
+    assert intents.parse("follow me around")["mode"] == "follow"
     p = intents.parse("Jarvis, find Atharv")
     assert p["mode"] == "find" and p["target"] == "atharv"
     p = intents.parse("go to Priya")
@@ -114,4 +115,22 @@ def test_follow_straight_never_turns():
     a = c.step([], FAR, now=3.0, dt=0.1)
     assert a.linear == 0 and a.angular == 0                      # lost: stand still, no search spin
     assert intents.parse("follow me straight")["mode"] == "follow_straight"
-    assert intents.parse("follow me")["mode"] == "follow"
+    assert intents.parse("follow me")["mode"] == "follow_straight"
+
+
+def test_demo_tricks_tolerate_wording():
+    cases = {"Hey Jarvis, say hi to all the judges": "greet", "say hello to everyone": "greet",
+             "Jarvis sit": "sit", "sit down": "sit", "here is your treat": "treat",
+             "take a selfie": "selfie", "take our photo": "selfie",
+             "show them what you see": "view_camera", "show your face": "view_face"}
+    for text, trick in cases.items():
+        r = intents.parse(text)
+        assert r and r["action"] == "demo" and r["demo"] == trick, text
+    assert intents.parse("what do you see")["action"] == "see"
+
+
+def test_follow_straight_follows_nearest_body_from_behind():
+    c = Controller(); c.set("follow_straight", "any", now=0)
+    back = Detection(name="unknown", kind="person", bearing_deg=3, distance_m=2.5, score=0.6)
+    a = c.step([back], FAR, now=0.1, dt=0.1)
+    assert a.linear > 0 and a.angular == 0

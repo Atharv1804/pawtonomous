@@ -2,6 +2,7 @@
 firmware/esp32_motor/secrets.h
 .robot_udp_key
 .hermes_api_key
+.telegram_bot
 *.env
 .env*
 # --- private / personal ---

@@ -188,6 +188,38 @@ class FaceDB:
         return (best, best_score) if best_score >= MATCH_THRESHOLD else ("unknown", best_score)
 
 
+OWNER = os.environ.get("PET_OWNER", "atharv")
+FRIEND_SAME = 0.45          # SFace cosine: same friend as one already in the list
+
+
+class FriendBook:
+    """People met WHILE the owner is around, remembered as 'friends' (embeddings only, no photos).
+    Saved to faces/friends.npz so the list survives restarts."""
+
+    def __init__(self, folder=FACES_DIR):
+        self.path = os.path.join(folder, "friends.npz")
+        self.lock = threading.Lock()
+        try:
+            self.embs = list(np.load(self.path)["emb"])
+        except (OSError, KeyError, ValueError):
+            self.embs = []
+        self.met_today = 0
+
+    def meet(self, emb):
+        emb = emb.reshape(-1) / np.linalg.norm(emb)
+        with self.lock:
+            if self.embs and max(float(e @ emb) for e in self.embs) >= FRIEND_SAME:
+                return False                                   # already a friend
+            self.embs.append(emb)
+            self.met_today += 1
+            np.savez(self.path, emb=np.array(self.embs))
+            return True
+
+    def count(self):
+        with self.lock:
+            return len(self.embs)
+
+
 class Perception:
     def __init__(self, facedb):
         self.db = facedb
@@ -203,6 +235,8 @@ class Perception:
         self.persons.anchors_mlvl = self.persons.anchors_mlvl[:3]
         self.tracks = []        # [{"box", "name", "until"}] keeps a name on a person seen from behind
         self.face_tracks = []   # same idea for faces: a recognised face stays named while it moves
+        self.friends = FriendBook()
+        self.new_friends = 0    # read by the brain to react
         self.last_auto_learn = {}
         self.n = 0
 
@@ -253,12 +287,15 @@ class Perception:
         dets, boxes = [], []
         self.face_tracks = [t for t in self.face_tracks if t["until"] > now]
         faces = self.faces(img)[:4]
+        strangers = []                                      # (embedding) of clear unknown faces this frame
         for f in faces:
             x, y, fw, fh = (float(v) for v in f[:4])
             name, sim = "unknown", 0.0
             if fh >= 36:                                    # too small to recognise reliably
                 emb = self.embedding(img, f)
                 name, sim = self.db.match(emb)
+                if name == "unknown" and fh >= 48:
+                    strangers.append(emb)
                 if name != "unknown" and sim >= AUTO_LEARN_SCORE and len(faces) == 1:
                     self._auto_learn(name, emb, now)
             box = (x, y, x + fw, y + fh)
@@ -272,6 +309,10 @@ class Perception:
             dets.append(Detection(name=name, kind="face", bearing_deg=round(self._bearing(x + fw / 2, w), 1),
                                   distance_m=self._distance(fh, w, FACE_HEIGHT_M), score=round(sim, 2)))
             boxes.append(("face", name, x, y, x + fw, y + fh))
+        if strangers and any(d.name == OWNER for d in dets):  # met while the owner is here -> friend
+            for emb in strangers:
+                if self.friends.meet(emb):
+                    self.new_friends += 1
         self.n += 1
         if self.n % 3 == 0:                                 # people detector every 3rd frame (slower)
             self.tracks = [t for t in self.tracks if t["until"] > now]
@@ -343,10 +384,24 @@ def _iou(a, b):
 
 
 def annotate(img, boxes):
+    """Demo-friendly markings: known faces get their name, unknown faces a big "?";
+    whole-body boxes are thin and only labelled when they belong to a known person."""
     out = img.copy()
     for kind, name, x1, y1, x2, y2 in boxes:
-        color = (0, 200, 0) if name != "unknown" else ((0, 160, 255) if kind == "face" else (200, 120, 0))
-        cv2.rectangle(out, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-        cv2.putText(out, "%s %s" % (kind, name), (int(x1), max(15, int(y1) - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        p1, p2 = (int(x1), int(y1)), (int(x2), int(y2))
+        if kind == "face":
+            known = name != "unknown"
+            color = (80, 220, 80) if known else (0, 170, 255)
+            label = name.capitalize() if known else "?"
+            cv2.rectangle(out, p1, p2, color, 3)
+            scale = 0.9 if known else 1.3
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+            ty = max(th + 6, p1[1] - 8)
+            cv2.rectangle(out, (p1[0], ty - th - 6), (p1[0] + tw + 10, ty + 4), color, -1)
+            cv2.putText(out, label, (p1[0] + 5, ty), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 2)
+        else:
+            color = (80, 220, 80) if name != "unknown" else (200, 160, 60)
+            cv2.rectangle(out, p1, p2, color, 1)
+            if name != "unknown":
+                cv2.putText(out, name.capitalize(), (p1[0] + 4, p2[1] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     return out

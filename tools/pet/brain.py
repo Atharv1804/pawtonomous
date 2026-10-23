@@ -62,6 +62,11 @@ CURIOUS_PROMPT = (
     'them warmly (for example Hi there, friend!) and never describe their body, clothes or looks. Empty '
     'string if nothing stands out"}')
 REMARK_EVERY_S = 15.0
+GREETING = "Hi everyone, I'm Jarvis, Atharv's pet! It's really nice to meet you all!"
+GOODBYE = "Bye everyone! Thank you for meeting me!"
+DEMO_LINES = [GOODBYE, GREETING, "Yummy! Thank you!", "Say cheese!", "Got it! Sending it to Atharv's Telegram.",
+              "Following you!", "Okay, stopping."]
+TELEGRAM_FILE = os.path.expanduser("~/robot_ws/.telegram_bot")   # TELEGRAM_BOT_TOKEN=..., TELEGRAM_ALLOWED_USERS=...
 VISION_HZ = float(os.environ.get("PET_VISION_HZ", "8"))   # 8/s tracks people fine and leaves CPU for voice
 cv2.setNumThreads(int(os.environ.get("PET_CV_THREADS", "2")))
 
@@ -128,6 +133,11 @@ class Brain:
         self.last_remark = 0.0
         self.cam_pip = {"until": 0.0, "caption": ""}     # mini camera feed on the face screen
         self.last_pip = 0.0
+        # demo / pet tricks shown on the face screen
+        self.anim = {"name": "", "until": 0.0}           # paw_wave | spin_eyes | countdown | flash
+        self.view = "face"                               # "face" or "camera" (full-screen annotated feed)
+        self.photo = {"until": 0.0, "id": 0}              # selfie on screen
+        self.selfie_jpg = b""
 
     # ---------- events / speech / display ----------
     def event(self, ev):
@@ -194,9 +204,16 @@ class Brain:
         now = time.time()
         with self.lock:
             expr = self.expr if now < self.expr_until else self.base_expr
+            dets = self.dets if now - self.dets_stamp < 1.0 else []
             return {"expression": expr, "gaze_x": round(self.gaze, 2), "now": now,
                     "talk": self.talk, "mode": self.ctrl.cmd.mode, "status": self.status_text(now),
-                    "camera": self.cam_pip if now < self.cam_pip["until"] else None}
+                    "camera": self.cam_pip if now < self.cam_pip["until"] else None,
+                    "anim": self.anim if now < self.anim["until"] else None,
+                    "view": self.view,
+                    "photo": self.photo["id"] if now < self.photo["until"] else 0,
+                    "friends": self.perception.friends.count(),
+                    "faces": sum(1 for d in dets if d.kind == "face"),
+                    "owner_here": any(d.name == vision.OWNER for d in dets)}
 
     # ---------- commands ----------
     def resolve_name(self, target):
@@ -278,7 +295,8 @@ class Brain:
                 "phase": c.phase, "autonomy": self.autonomy, "seeing": dets,
                 "last_seen": {n: {"seconds_ago": round(now - v["t"], 1), "bearing_deg": v["bearing_deg"],
                                   "kind": v["kind"]} for n, v in self.last_seen.items()},
-                "known_faces": sorted(self.db.names()), "camera_fps": round(self.camera.fps, 1),
+                "known_faces": sorted(self.db.names()), "friends_met": self.perception.friends.count(),
+                "camera_fps": round(self.camera.fps, 1),
                 "vision_hz": round(self.vision_hz, 1), "camera_error": self.camera.error,
                 "ranges_m": self.ranges, "sensors_ok": self.sensors_ok,
                 "note": "bearing_deg > 0 = to the right; distances are rough estimates from box size",
@@ -366,6 +384,115 @@ class Brain:
             else:
                 self.exploring_until = 0.0
                 self.body.drive(act.linear, act.angular)
+
+    # ---------- demo / pet tricks (hard-coded: instant, no LLM) ----------
+    def set_anim(self, name, seconds):
+        with self.lock:
+            self.anim = {"name": name, "until": time.time() + seconds, "start": time.time()}
+
+    def _nudge(self, linear, seconds):
+        """A small fixed movement (the control loop is idle during tricks)."""
+        t = time.time()
+        while time.time() - t < seconds:
+            self.body.drive(linear, 0.0)
+            time.sleep(0.1)
+        self.body.drive(0.0, 0.0)
+
+    def trick(self, name):
+        """Run one trick in the background so the voice loop is free at once (and can say stop)."""
+        if name in ("view_camera", "view_face"):
+            self.view = "camera" if name == "view_camera" else "face"
+            self.set_expression("happy", 1.5)
+            return {"ok": True, "view": self.view}
+        with self.lock:
+            self.ctrl.stop(time.time())                    # tricks replace any running task
+        self.body.drive(0.0, 0.0)
+        threading.Thread(target=getattr(self, "_trick_" + name), daemon=True).start()
+        self.event({"trick": name})
+        return {"ok": True, "trick": name}
+
+    def _trick_greet(self):
+        self.view = "face"
+        self.set_anim("paw_wave", 5.0)
+        self.set_expression("happy", 5.5)
+        self.say(GREETING)
+        time.sleep(5.0)
+        self.set_expression("neutral", 0.1)
+
+    def _trick_bye(self):
+        self.view = "face"
+        self.set_anim("paw_wave", 3.5)
+        with self.lock:
+            self.anim["text"] = "Bye!"
+        self.set_expression("happy", 4.0)
+        self.say(GOODBYE)
+        time.sleep(3.5)
+        self.set_expression("neutral", 0.1)
+
+    def _trick_sit(self):
+        self.view = "face"
+        self.set_expression("focused", 1.0)
+        self._nudge(0.12, 0.35)                          # a little shuffle, then settle down
+        time.sleep(0.3)
+        self.set_expression("sleeping", 600)              # eyes closed until the next command
+
+    def _trick_treat(self):
+        self.view = "face"
+        self.set_anim("spin_eyes", 3.0)
+        self.set_expression("happy", 3.5)
+        self.say("Yummy! Thank you!")
+        time.sleep(3.0)
+        self._nudge(0.15, 0.5)                           # happy little step forward
+        self.set_expression("sleepy", 600)
+
+    def _trick_selfie(self):
+        self.view = "face"
+        self.say("Say cheese!")
+        time.sleep(0.8)
+        self.set_anim("countdown", 3.0)
+        time.sleep(3.0)
+        img, stamp = self.camera.latest()
+        if img is None:
+            self.say("Oops, I can't see right now.")
+            return
+        ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        self.selfie_jpg = jpg.tobytes()
+        folder = os.path.expanduser("~/robot_ws/captures")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "selfie_%s.jpg" % time.strftime("%Y%m%d_%H%M%S"))
+        with open(path, "wb") as f:
+            f.write(self.selfie_jpg)
+        self.set_anim("flash", 0.4)
+        with self.lock:
+            self.photo = {"until": time.time() + 7.0, "id": self.photo["id"] + 1}
+        self.set_expression("happy", 7.5)
+        sent = self._telegram_photo(self.selfie_jpg, "Selfie from Jarvis 🐾")
+        self.say("Got it! Sending it to Atharv's Telegram." if sent else "Got it! I saved our selfie.")
+        self.event({"selfie": path, "telegram": sent})
+
+    def _telegram_photo(self, jpg, caption):
+        """Send a photo to the owner's Telegram straight from the Mac (its VPN reaches Telegram)."""
+        try:
+            cfg = dict(l.strip().split("=", 1) for l in open(TELEGRAM_FILE) if "=" in l)
+            token, chat = cfg["TELEGRAM_BOT_TOKEN"], cfg["TELEGRAM_ALLOWED_USERS"].split(",")[0].strip()
+        except (OSError, KeyError, ValueError):
+            log("selfie: no Telegram settings in %s" % TELEGRAM_FILE)
+            return False
+        boundary = "pawtonomous%d" % int(time.time())
+        parts = []
+        for k, v in (("chat_id", chat), ("caption", caption)):
+            parts.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, k, v)).encode())
+        parts.append(("--%s\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"selfie.jpg\"\r\n"
+                      "Content-Type: image/jpeg\r\n\r\n" % boundary).encode() + jpg + b"\r\n")
+        body = b"".join(parts) + ("--%s--\r\n" % boundary).encode()
+        try:
+            req = urllib.request.Request("https://api.telegram.org/bot%s/sendPhoto" % token, body,
+                                         {"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return bool(json.load(r).get("ok"))
+        except (OSError, ValueError) as e:
+            log("selfie: Telegram send failed: %s" % str(e)[:120])
+            return False
 
     # ---------- curious exploring: camera + small vision model on the Mac ----------
     def _look(self):
@@ -541,6 +668,10 @@ def make_handler(brain):
                     img = cv2.resize(img, (w, int(img.shape[0] * w / img.shape[1])), interpolation=cv2.INTER_AREA)
                 ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 return self._send(200, jpg.tobytes(), "image/jpeg")
+            if url.path == "/selfie.jpg":
+                if not brain.selfie_jpg:
+                    return self._send(404, {"ok": False, "error": "no selfie yet"})
+                return self._send(200, brain.selfie_jpg, "image/jpeg")
             if url.path in ("/", "/face"):
                 return self._send(200, face_html, "text/html; charset=utf-8")
             return self._send(404, {"ok": False, "error": "not found"})
@@ -587,6 +718,15 @@ def make_handler(brain):
                         brain.voice_status = {"text": str(p.get("text", ""))[:60],
                                               "until": time.time() + float(p.get("seconds", 10))}
                     return self._send(200, {"ok": True})
+                if url.path == "/demo":
+                    action = str(p.get("action", ""))
+                    if not hasattr(brain, "_trick_" + action) and action not in ("view_camera", "view_face"):
+                        return self._send(400, {"ok": False, "error": "unknown trick %r" % action})
+                    return self._send(200, brain.trick(action))
+                if url.path == "/view":                      # the dot on the screen toggles this
+                    v = str(p.get("view", ""))
+                    brain.view = v if v in ("face", "camera") else ("face" if brain.view == "camera" else "camera")
+                    return self._send(200, {"ok": True, "view": brain.view})
                 if url.path == "/show_camera":
                     brain.show_camera(float(p.get("seconds", 5)), str(p.get("caption", "")))
                     return self._send(200, {"ok": True})

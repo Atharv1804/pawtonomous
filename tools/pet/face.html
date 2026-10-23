@@ -27,10 +27,11 @@ const SHAPES = {               // open: eye height 0..1, lid: inner-lid tilt (+ 
   surprised: {open: 1.3,  lid: 0.0,   smile: 0.0,  pupil: 0.7, o: 1},
   listening: {open: 1.1,  lid: -0.1,  smile: 0.3,  pupil: 1.2},
   thinking:  {open: 0.9,  lid: 0.1,   smile: 0.05, pupil: 1.0, lookUp: 1},
+  sleeping:  {open: 0.05, lid: 0.0,   smile: 0.2,  pupil: 0.8, zzz: 1},
 };
 let state = {expression: "neutral", gaze_x: 0, talk: {envelope: [], step: 0.05, start: 0}, now: 0};
 let clockOffset = 0;                       // brain time - browser time
-let cur = Object.assign({gx: 0, gy: 0, mouth: 0, squint: 0, tiltOne: 0, o: 0, scan: 0, lookUp: 0}, SHAPES.neutral);
+let cur = Object.assign({gx: 0, gy: 0, mouth: 0, squint: 0, tiltOne: 0, o: 0, scan: 0, lookUp: 0, zzz: 0}, SHAPES.neutral);
 // Blink as a small state machine: wait -> closing -> opening -> wait (3-7 s). The old version could
 // re-trigger while still opening, which chained into rapid double blinks.
 let blinkPhase = "wait", blinkAt = performance.now() + 3000, blink = 0;
@@ -77,7 +78,11 @@ function eye(cx, cy, w, h, side, t) {
   g.shadowBlur = 0;
   // pupil (dark) follows the gaze
   const pr = w * 0.17 * cur.pupil;
-  const px = cx + cur.gx * w * 0.22, py = cy + cur.gy * eh * 0.22;
+  let px = cx + cur.gx * w * 0.22, py = cy + cur.gy * eh * 0.22;
+  if (state.anim && state.anim.name === "spin_eyes") {        // treat: pupils whirl round and round
+    const ang = t / 90 * side;
+    px = cx + Math.cos(ang) * w * 0.22; py = cy + Math.sin(ang) * eh * 0.22;
+  }
   if (eh > pr * 1.4) { g.fillStyle = "#05070b"; g.beginPath(); g.arc(px, py, pr, 0, Math.PI * 2); g.fill();
     g.fillStyle = "rgba(255,255,255,0.85)"; g.beginPath(); g.arc(px - pr * 0.35, py - pr * 0.35, pr * 0.28, 0, Math.PI * 2); g.fill(); }
   // eyelids: tilted top lid (angry/focused or sad) and a cheek for happy squints
@@ -113,6 +118,93 @@ function mouth(cx, cy, w, h, t) {
   g.restore();
 }
 
+// ---------- demo extras: paw wave, spinning eyes, countdown, selfie, full camera view, view dot ----------
+const C = () => getComputedStyle(document.documentElement).getPropertyValue("--eye");
+let localView = null, localViewAt = 0;          // a tap switches at once, before the brain confirms
+const view = () => (localView && Date.now() - localViewAt < 1500) ? localView : (state.view || "face");
+
+function dotRect(W, H) { const r = Math.max(18, H * 0.035); return {x: W - r * 2.2, y: H - r * 2.2, r: r}; }
+cv.addEventListener("pointerdown", (e) => {
+  const W = cv.width, H = cv.height, s = devicePixelRatio, d = dotRect(W, H);
+  const x = e.clientX * s, y = e.clientY * s;
+  if (Math.hypot(x - d.x, y - d.y) < d.r * 2.5) {           // generous hit area for a finger
+    localView = view() === "camera" ? "face" : "camera"; localViewAt = Date.now();
+    fetch("/view", {method: "POST", body: JSON.stringify({view: localView})}).catch(() => {});
+  }
+});
+function drawDot(W, H) {
+  const d = dotRect(W, H);
+  g.save(); g.globalAlpha = 0.75;
+  g.fillStyle = view() === "camera" ? "#ff5a5a" : C();
+  g.beginPath(); g.arc(d.x, d.y, d.r * 0.55, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = C(); g.lineWidth = 3; g.beginPath(); g.arc(d.x, d.y, d.r, 0, Math.PI * 2); g.stroke();
+  g.restore();
+}
+
+// full-screen annotated camera view (resized + annotated on the Mac)
+const full = new Image(); let fullLoading = false;
+setInterval(() => {
+  if (view() !== "camera" || fullLoading) return;
+  fullLoading = true;
+  const img = new Image();
+  img.onload = () => { full.src = img.src; fullLoading = false; };
+  img.onerror = () => { fullLoading = false; };
+  img.src = "/frame.jpg?annotated=1&w=800&t=" + Date.now();
+}, 160);
+function drawFullCamera(W, H) {
+  g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
+  if (full.width) {
+    const s = Math.min(W / full.width, H / full.height), w = full.width * s, h = full.height * s;
+    g.drawImage(full, (W - w) / 2, (H - h) / 2, w, h);
+  }
+  g.save();
+  g.font = "bold " + Math.round(H * 0.04) + "px -apple-system, Roboto, sans-serif";
+  g.textBaseline = "top"; g.fillStyle = "rgba(5,7,11,0.65)"; g.fillRect(0, 0, W, H * 0.075);
+  g.fillStyle = C(); g.textAlign = "left";
+  g.fillText("JARVIS VISION  ·  faces: " + (state.faces || 0) + "  ·  friends met: " + (state.friends || 0), W * 0.02, H * 0.018);
+  g.textAlign = "right"; g.fillStyle = state.owner_here ? "#7dff8a" : "#ffb347";
+  g.fillText(state.owner_here ? "OWNER FOUND" : "looking for owner...", W * 0.98, H * 0.018);
+  g.restore();
+}
+
+// paw wave: a big cartoon paw rocking side to side, with "Hi!"
+function drawPaw(W, H, t) {
+  const cx = W / 2, cy = H * 0.47, s = Math.min(W, H) * 0.20, a = Math.sin(t / 160) * 0.45;
+  g.save(); g.translate(cx, cy + s * 1.2); g.rotate(a); g.translate(0, -s * 1.2);
+  g.fillStyle = C(); g.shadowColor = "rgba(79,227,255,0.4)"; g.shadowBlur = s * 0.2;
+  g.beginPath(); g.ellipse(0, s * 0.35, s * 0.62, s * 0.52, 0, 0, Math.PI * 2); g.fill();      // main pad
+  for (const [x, y, r] of [[-0.62, -0.32, 0.22], [-0.22, -0.62, 0.24], [0.22, -0.62, 0.24], [0.62, -0.32, 0.22]]) {
+    g.beginPath(); g.ellipse(x * s, y * s, r * s, r * s * 1.2, 0, 0, Math.PI * 2); g.fill();     // toes
+  }
+  g.restore();
+  g.save(); g.fillStyle = C(); g.textAlign = "center";
+  g.font = "bold " + Math.round(H * 0.11) + "px -apple-system, Roboto, sans-serif";
+  g.fillText(state.anim && state.anim.text ? state.anim.text : "Hi!", W / 2, H * 0.9); g.restore();
+}
+
+function drawCountdown(W, H) {
+  const a = state.anim, left = Math.ceil(a.until - (Date.now() / 1000 + clockOffset));
+  g.save(); g.fillStyle = "rgba(5,7,11,0.55)"; g.fillRect(0, 0, W, H);
+  g.fillStyle = C(); g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = "bold " + Math.round(H * 0.5) + "px -apple-system, Roboto, sans-serif";
+  g.fillText(String(Math.max(1, left)), W / 2, H / 2);
+  g.restore();
+}
+
+const selfie = new Image(); let selfieId = 0;
+function drawSelfie(W, H) {
+  if (state.photo !== selfieId) { selfieId = state.photo; selfie.src = "/selfie.jpg?id=" + selfieId; }
+  g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
+  if (selfie.width) {
+    const s = Math.min(W * 0.9 / selfie.width, H * 0.78 / selfie.height), w = selfie.width * s, h = selfie.height * s;
+    g.fillStyle = "#ffffff"; g.fillRect((W - w) / 2 - 10, H * 0.06 - 10, w + 20, h + 20);
+    g.drawImage(selfie, (W - w) / 2, H * 0.06, w, h);
+  }
+  g.save(); g.fillStyle = C(); g.textAlign = "center";
+  g.font = "bold " + Math.round(H * 0.055) + "px -apple-system, Roboto, sans-serif";
+  g.fillText("Selfie! Sent to Atharv's Telegram", W / 2, H * 0.94); g.restore();
+}
+
 // Mini camera feed (picture-in-picture): shown only when the brain asks (remarks, every ~30 s exploring).
 const cam = new Image();
 let camLoading = false, camShown = false;
@@ -144,13 +236,25 @@ function drawCam(W, H) {
 }
 
 let lastDraw = 0;
+function drawZzz(W, H, ts) {
+  if (cur.zzz < 0.5) return;
+  g.save(); g.fillStyle = C(); g.textAlign = "left";
+  for (let i = 0; i < 3; i++) {
+    const p = ((ts / 1400) + i / 3) % 1;
+    g.globalAlpha = 1 - p;
+    g.font = "bold " + Math.round(H * (0.05 + 0.03 * i)) + "px -apple-system, Roboto, sans-serif";
+    g.fillText("z", W * (0.72 + 0.05 * i), H * (0.32 - 0.18 * p - 0.06 * i));
+  }
+  g.restore();
+}
+
 function frame(ts) {
   if (ts - lastDraw < 33) { requestAnimationFrame(frame); return; }   // ~30 fps keeps the Pi cool
   lastDraw = ts;
   const shape = SHAPES[state.expression] || SHAPES.neutral;
   const k = 0.18;
   for (const key of ["open", "lid", "smile", "pupil"]) cur[key] = lerp(cur[key], shape[key], k);
-  for (const key of ["squint", "tiltOne", "o", "scan", "lookUp"]) cur[key] = lerp(cur[key], shape[key] || 0, k);
+  for (const key of ["squint", "tiltOne", "o", "scan", "lookUp", "zzz"]) cur[key] = lerp(cur[key], shape[key] || 0, k);
   // gaze: toward the tracked person; wander side to side while searching; up while thinking
   let gx = state.gaze_x || 0;
   if (cur.scan > 0.5) gx = Math.sin(ts / 600);
@@ -165,13 +269,21 @@ function frame(ts) {
   }
 
   const W = cv.width, H = cv.height;
+  const anim = state.anim && state.anim.name;
+  if (state.photo) { drawSelfie(W, H); drawDot(W, H); requestAnimationFrame(frame); return; }
+  if (anim === "flash") { g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H); requestAnimationFrame(frame); return; }
+  if (view() === "camera" && !anim) { drawFullCamera(W, H); drawDot(W, H); requestAnimationFrame(frame); return; }
   g.fillStyle = "#05070b"; g.fillRect(0, 0, W, H);
+  if (anim === "paw_wave") { drawPaw(W, H, ts); drawDot(W, H); requestAnimationFrame(frame); return; }
   const ew = Math.min(W * 0.22, H * 0.36), eh = ew * 1.15, gap = ew * 0.75;
   const bob = Math.sin(ts / 1400) * H * 0.006;
   eye(W / 2 - gap - ew / 2 + ew / 2, H * 0.40 + bob, ew, eh, -1, ts);
   eye(W / 2 + gap + ew / 2 - ew / 2, H * 0.40 + bob, ew, eh, 1, ts);
   mouth(W / 2, H * 0.74 + bob, ew * 2.2, eh * 0.45, ts);
   drawCam(W, H);
+  drawZzz(W, H, ts);
+  if (anim === "countdown") drawCountdown(W, H);
+  drawDot(W, H);
   // status line: what the robot is doing right now
   const status = state.status || "";
   if (status) {
