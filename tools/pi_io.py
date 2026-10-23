@@ -63,6 +63,18 @@ def camera_loop():
         time.sleep(2)                           # camera unplugged: retry
 
 
+def recompress(jpg, quality):
+    """Smaller JPEG (same size in pixels) for the WiFi link; ~3 ms on the Pi 5."""
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+        ok, out = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        return out.tobytes() if ok else jpg
+    except Exception:                           # no OpenCV / bad frame: send the original
+        return jpg
+
+
 def play(wav_bytes, envelope=False):
     fd, path = tempfile.mkstemp(suffix=".wav")
     with os.fdopen(fd, "wb") as f:
@@ -105,15 +117,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(503, {"ok": False, "error": "no fresh camera frame"})
             return self._send(200, latest["jpg"], "image/jpeg")
         if path == "/stream":
+            # ?fps=8&q=60: fewer, re-compressed frames for the Mac over slow WiFi (fresh, not queued);
+            # no parameters = every camera frame untouched (the robot's own screen).
+            q = parse_qs(urlparse(self.path).query)
+            fps = float(q.get("fps", ["0"])[0] or 0)
+            quality = int(q.get("q", ["0"])[0] or 0)
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
-            last = -1
+            last, sent = -1, 0.0
             try:
                 while True:
+                    if fps > 0:
+                        time.sleep(max(0.0, 1.0 / fps - (time.time() - sent)))
                     with cond:
                         cond.wait_for(lambda: latest["n"] != last, timeout=5)
                         jpg, last = latest["jpg"], latest["n"]
+                    sent = time.time()
+                    if jpg and quality:
+                        jpg = recompress(jpg, quality)
                     if jpg:
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpg))
                         self.wfile.write(jpg + b"\r\n")

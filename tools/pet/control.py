@@ -43,6 +43,10 @@ FOLLOW_HOLD_S = 0.5           # owner briefly not detected: keep the last comman
 FOLLOW_DEADBAND_DEG = 12.0    # roughly ahead: drive dead straight (prefer straight lines)
 FOLLOW_TURN_SCALE = 0.35      # only gentle corrections while driving
 FOLLOW_ALIGN_DEG = 45.0       # keep driving (with a gentle correction) while the owner is within this angle
+FOLLOW_DARK_MIN = 0.40       # "follow me": a body this dark (Atharv wears all black) counts as him
+FOLLOW_MAX_JUMP_DEG = 35.0   # ...but never jump to someone far from where he just was
+FOLLOW_CLOSE_H = 0.85        # body box this tall / wide in the picture = right in front: don't drive
+FOLLOW_CLOSE_W = 0.45
 FOLLOW_SMOOTH = 0.25          # steering low-pass: new = old + 0.25 * (target - old) -> no twitching
 ANY_TARGETS = ("", "any", "anyone", "someone", "person", "me", "somebody")
 
@@ -54,6 +58,8 @@ class Detection:
     bearing_deg: float
     distance_m: float = None   # rough estimate from box size (None if unknown)
     score: float = 1.0
+    dark: float = 0.0          # person boxes: share of very dark pixels on the torso (black clothes ~0.6+)
+    box: tuple = None          # (x1, y1, x2, y2) as 0..1 of the frame
 
 
 @dataclass
@@ -160,6 +166,23 @@ class Controller:
         c.spun_rad += SEARCH_TURN * dt
         return Action(angular=direction * SEARCH_TURN, expression="searching")
 
+    @staticmethod
+    def _follow_pick(c, dets, now):
+        """Who "follow me" follows: a dark-clothed body or the owner's face, preferring whoever is
+        closest to where the followed person just was."""
+        name = OWNER_NAME if is_any(c.target) else c.target.lower()
+        cands = [d for d in dets if d.name.lower() == name or (d.kind == "person" and d.dark >= FOLLOW_DARK_MIN)]
+        recent = c.extra.get("owner_seen") is not None and now - c.extra["owner_seen"] < 1.5
+        if recent:                                           # same person: no sudden jumps across the room
+            cands = [d for d in cands if abs(d.bearing_deg - c.extra["bearing"]) <= FOLLOW_MAX_JUMP_DEG]
+        if not cands:
+            return None
+
+        def score(d):
+            s = (1.0 if d.name.lower() == name else 0.0) + d.dark + (0.3 if d.kind == "person" else 0.0)
+            return s - (abs(d.bearing_deg - c.extra["bearing"]) / 90.0 if recent else 0.0)
+        return max(cands, key=score)
+
     def step(self, dets, ranges, now, dt):
         """One control tick. dets: list[Detection]; ranges: {'left','center','right': metres|None}."""
         c = self.cmd
@@ -203,21 +226,19 @@ class Controller:
             return Action(explore=True, expression="searching")
 
         if c.mode == "follow_straight":
-            # "Follow me" (demo): follow ONLY the owner, steering to stay behind them while driving.
-            # Not seen for a moment -> repeat the last command (no stutter); longer -> stop and wait.
-            owner = [d for d in dets if d.name == OWNER_NAME]
-            if not is_any(c.target):
-                owner = [d for d in dets if d.name.lower() == c.target.lower()] or owner
-            if not owner:
+            # "Follow me" (demo): follow the owner from BEHIND - his body in black clothes (or his face
+            # when he faces the robot), sticking to the same person. Not seen for a moment -> repeat
+            # the last command (no stutter); longer -> stop and wait.
+            det = self._follow_pick(c, dets, now)
+            if det is None:
                 last = c.extra.get("last")
                 seen = c.extra.get("owner_seen")             # the OWNER, not just any face
                 if last and seen is not None and now - seen < FOLLOW_HOLD_S:
                     return Action(linear=last[0], angular=last[1], expression="focused")
                 c.extra["last"] = None
                 return Action(expression="searching")           # stand still until it sees you again
-            det = max(owner, key=lambda d: d.score)
             c.last_seen, c.last_bearing = now, det.bearing_deg
-            c.extra["owner_seen"] = now
+            c.extra["owner_seen"], c.extra["bearing"] = now, det.bearing_deg
             b = det.bearing_deg
             if abs(b) <= FOLLOW_ALIGN_DEG:
                 # Straight line first: no steering inside the deadband, then a small, smoothed correction.
@@ -226,6 +247,8 @@ class Controller:
                 if abs(w) < 0.03:
                     w = 0.0
                 lin = approach_speed(Detection(det.name, det.kind, 0.0, det.distance_m, det.score), center, FOLLOW_DIST_M)
+                if det.box and (det.box[3] - det.box[1] >= FOLLOW_CLOSE_H or det.box[2] - det.box[0] >= FOLLOW_CLOSE_W):
+                    lin = 0.0                                # filling the picture: right in front of us
             else:
                 # Owner far off to the side: stop and turn slowly toward them, then go straight again.
                 w, lin = steer(b) * 0.6, 0.0

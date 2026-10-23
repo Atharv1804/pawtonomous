@@ -122,6 +122,25 @@ def test_follow_me_follows_only_the_owner_and_steers():
     assert intents.parse("follow me")["mode"] == "follow_straight"
 
 
+def body(bearing=0.0, dist=2.0, dark=0.7, box=(0.4, 0.2, 0.6, 0.8), name="unknown"):
+    return Detection(name=name, kind="person", bearing_deg=bearing, distance_m=dist, score=0.6, dark=dark, box=box)
+
+
+def test_follow_me_follows_a_dark_clothed_back():
+    c = Controller(); c.set("follow_straight", "any", now=0)
+    a = c.step([body(0, 2.5, dark=0.1)], FAR, now=0.1, dt=0.1)
+    assert a.linear == 0 and a.angular == 0                      # light clothes: not Atharv
+    a = c.step([body(0, 2.5, dark=0.1), body(3, 2.5, dark=0.7)], FAR, now=0.2, dt=0.1)
+    assert a.linear > 0                                          # all black, seen from behind: follow
+    assert c.cmd.last_bearing == 3
+    a = c.step([body(5, 2.5, dark=0.65), body(-60, 2.0, dark=0.9)], FAR, now=0.3, dt=0.1)
+    assert c.cmd.last_bearing == 5                               # another dark person far off: no jump
+    a = c.step([body(0, 2.5, dark=0.7, box=(0.2, 0.0, 0.8, 1.0))], FAR, now=0.4, dt=0.1)
+    assert a.linear == 0                                         # fills the picture: right in front, stop
+    a = c.step([face("atharv", 2, 2.5)], FAR, now=0.5, dt=0.1)
+    assert a.linear > 0                                          # facing the robot: his face works too
+
+
 def test_follow_me_rides_through_short_detection_gaps():
     c = Controller(); c.set("follow_straight", "any", now=0)
     a1 = c.step([face("atharv", 0, 2.5)], FAR, now=0.1, dt=0.1)

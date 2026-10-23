@@ -32,6 +32,7 @@ AUTO_LEARN_EVERY_S = 20.0   # ...at most this often per person (until MAX_VIEWS)
 MAX_VIEWS = 30
 TRACK_KEEP_S = 2.0          # keep a name on a face track this long after the last confident match
 FACE_HEIGHT_M = 0.22        # chin-to-forehead box height, for a rough distance estimate
+DARK_V = 60                 # HSV brightness below this = "very dark" (black clothes, hair)
 PERSON_HEIGHT_M = 1.0       # visible part of a person (camera is high and close): very rough
 PERSON_CLASS = 0
 _ROTATIONS = {"cw90": cv2.ROTATE_90_CLOCKWISE, "ccw90": cv2.ROTATE_90_COUNTERCLOCKWISE, "180": cv2.ROTATE_180}
@@ -242,6 +243,7 @@ class Perception:
         self.new_friends = 0    # read by the brain to react
         self.last_auto_learn = {}
         self.n = 0
+        self.people_every = 3                            # brain sets 1 while following (smoother)
 
     def faces(self, img, detector=None):
         h, w = img.shape[:2]
@@ -325,7 +327,7 @@ class Perception:
                 if self.friends.meet(emb):
                     self.new_friends += 1
         self.n += 1
-        if self.n % 3 == 0:                                 # people detector every 3rd frame (slower)
+        if self.n % self.people_every == 0:                 # people detector every 3rd frame (1 while following)
             self.tracks = [t for t in self.tracks if t["until"] > now]
             for x1, y1, x2, y2, conf in self._person_boxes(img):
                 name = "unknown"
@@ -339,7 +341,9 @@ class Perception:
                 if name != "unknown":
                     self.tracks.append({"box": (x1, y1, x2, y2), "name": name, "until": now + 4.0})
                 dets.append(Detection(name=name, kind="person", bearing_deg=round(self._bearing((x1 + x2) / 2, w), 1),
-                                      distance_m=self._distance(y2 - y1, w, PERSON_HEIGHT_M), score=round(conf, 2)))
+                                      distance_m=self._distance(y2 - y1, w, PERSON_HEIGHT_M), score=round(conf, 2),
+                                      dark=torso_darkness(img, x1, y1, x2, y2),
+                                      box=(x1 / w, y1 / h, x2 / w, y2 / h)))
                 boxes.append(("person", name, x1, y1, x2, y2))
             self._persons_cache = [d for d in dets if d.kind == "person"], [b for b in boxes if b[0] == "person"]
         else:
@@ -392,6 +396,17 @@ def _iou(a, b):
     inter = ix * iy
     union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
     return inter / union if union > 0 else 0.0
+
+
+def torso_darkness(img, x1, y1, x2, y2):
+    """Share of very dark pixels in the middle of a person box (shirt / back): black clothes score high,
+    even from behind, so "follow me" can follow Atharv without seeing his face."""
+    bw, bh = x2 - x1, y2 - y1
+    crop = img[max(0, int(y1 + bh * 0.2)):int(y1 + bh * 0.7), max(0, int(x1 + bw * 0.25)):int(x2 - bw * 0.25)]
+    if crop.size == 0:
+        return 0.0
+    v = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 2]
+    return round(float((v < DARK_V).mean()), 2)
 
 
 def annotate(img, boxes):

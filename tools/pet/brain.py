@@ -193,7 +193,7 @@ class Brain:
         if c.mode == "follow":
             return "Following %s" % who
         if c.mode == "follow_straight":
-            return "Following %s (straight line only)" % who
+            return "Following %s" % who
         if c.mode == "look_at":
             return "Turning to look at %s" % who
         if c.mode == "wander":
@@ -387,6 +387,7 @@ class Brain:
                 dets = self.dets if now - self.dets_stamp < 1.0 else []
                 act = self.ctrl.step(dets, self.ranges, now, dt)
                 mode = self.ctrl.cmd.mode
+                self.perception.people_every = 1 if mode == "follow_straight" else 3   # bodies every frame
                 self._update_mood(dets, now)
             if act.say:
                 self.say(act.say)
@@ -499,7 +500,7 @@ class Brain:
             self.say("Okay, no photo.")
             self.event({"selfie": "cancelled"})
             return
-        img, stamp = self.camera.latest()
+        img, stamp = self._full_frame()
         if img is None:
             self.say("Oops, I can't see right now.")
             return
@@ -518,8 +519,19 @@ class Brain:
         self.say("Got it! Sending it to Atharv's Telegram." if sent else "Got it! I saved our selfie.")
         self.event({"selfie": path, "telegram": sent})
 
+    def _full_frame(self):
+        """A full-quality picture straight from the Pi (the live stream to the Mac is compressed)."""
+        try:
+            data = urllib.request.urlopen(PI_IO + "/frame.jpg", timeout=3).read()
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                return img, time.time()
+        except OSError as e:
+            log("full frame failed, using the stream: %s" % e)
+        return self.camera.latest()
+
     def _capture(self, prefix):
-        img, stamp = self.camera.latest()
+        img, stamp = self._full_frame()
         if img is None:
             return None, ""
         ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])

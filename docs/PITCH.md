@@ -2,28 +2,25 @@
 
 About 5 minutes. **Bold** = say it out loud to Jarvis (always start with "Hey Jarvis", then wait for the chime).
 *Italics* = what you do. > Quotes = what you say to the judges.
-Keep your **iPhone in your hand**: open the Jarvis Remote, tap **TALK**, speak, tap **DONE**. Its buttons are a backup for every trick.
+Keep your **iPhone in your hand** with the **Jarvis Remote** open: tap **TALK**, speak, tap **DONE**. Its buttons are a backup for every trick.
 
 ---
 
 ## 0. Before you're called up
 - Mac open, Astrill on, LM Studio running, same WiFi as the robot. Pi + motor battery + ESP32 charged.
-- Robot on the floor about 2 m in front of you, **facing you**. Screen shows the eyes and the "FOLLOW ME" button.
+- Jarvis already **on the table, facing the judges**, showing his eyes. Open the **Jarvis Remote** on your iPhone.
 - Optional: say "reset friends" to me beforehand so the friends counter starts at 0.
 
-## 1. Walk-on: Jarvis follows you
-**"Hey Jarvis, follow me."** *(or tap FOLLOW ME on his screen)*
-*Walk slowly backwards towards the stage, facing him. He follows your face and stays about 1 m behind.*
-*At the stage: **"Hey Jarvis, stop."** (or tap the red STOP). Pick him up and put him on the table facing the judges.*
-
-## 2. Hello
-**"Hey Jarvis, say hi to the judges."**
+## 1. Hello
+*Stand next to him.* **"Hey Jarvis, say hi to the judges."** *(or the remote: TALK → "say hi to the judges" → DONE)*
 *(a paw waves on his screen: "Hi everyone, I'm Jarvis, Atharv's pet! It's really nice to meet you all!")*
 
-> "Good boy. This is Jarvis, my robot pet. He just heard me, followed me up here, and said hello to
-> you, and none of it needed a paid AI service."
+> "This is Jarvis, my robot pet. He just heard me and said hello to you, and none of it needed a paid
+> AI service."
 
+## 2. Sit
 **"Hey Jarvis, sit."** *(a little shuffle, then he closes his eyes and dozes off: z z z)*
+> "He's a good boy. He even naps."
 
 ## 3. Why I built him
 > "Most smart devices are stuck in one place and stuck in the cloud. A smart speaker can't come to
@@ -45,10 +42,12 @@ Keep your **iPhone in your hand**: open the Jarvis Remote, tap **TALK**, speak, 
 ## 5. His brain (two brains)
 > "Jarvis actually has **two brains**.
 >
-> The **fast brain** is his reflexes. It recognises faces and people about ten times a second using
+> The **fast brain** is his reflexes. It recognises faces and people several times a second using
 > OpenCV models: YuNet for faces, SFace to know *whose* face it is, and NanoDet to find people. Commands
 > like 'follow me', 'sit' or 'stop' are recognised instantly, without any language model, so he
-> reacts in about a second.
+> reacts in about a second. When he follows me, he locks onto my outfit from behind, so he doesn't
+> need to see my face. And if the room is too loud for 'Hey Jarvis', I have a remote on my phone:
+> I press TALK, speak, and press DONE.
 >
 > The **thinking brain** is an AI agent, **Hermes Agent** by Nous Research. It controls his body through
 > **22 tools** over the **Model Context Protocol**: drive, follow, find a person, look, listen, speak,
@@ -65,7 +64,7 @@ Keep your **iPhone in your hand**: open the Jarvis Remote, tap **TALK**, speak, 
 > leaves the room.
 >
 > The Pi on its own overheated running all of this, so I split the work. The Pi is his **body**: camera,
-> motors, sensors, speaker. My laptop is his **brain**, linked through one encrypted SSH tunnel. That
+> motors, sensors, speaker. My laptop is his **brain**, linked through encrypted SSH tunnels. That
 > took the Pi from about 85% CPU and 63 °C down to about 15% and 50 °C."
 
 ## 6. Treat time (your phone rings)
@@ -104,7 +103,7 @@ Keep your **iPhone in your hand**: open the Jarvis Remote, tap **TALK**, speak, 
 *(or tap the small ring next to the dot)* *("Say cheese!": his screen shows what he is about to photograph, 3-2-1,
 then the photo. Tap **< BACK** during the countdown to cancel.)*
 
-> "And because he runs on Hermes Agent, that selfie is already on my phone, in Telegram."
+> "And that selfie is already on my phone: he sent it to me through his Telegram bot."
 *(show your phone)*
 
 ## 10. Close
@@ -112,6 +111,9 @@ then the photo. Tap **< BACK** during the countdown to cancel.)*
 > explores on his own, built from affordable off-the-shelf parts and open-source AI that runs locally.
 > Next I want to add wheel encoders and a front depth sensor for proper navigation, let him map rooms,
 > and build him a charging dock he can drive back to by himself."
+
+*Optional, only if there is floor space and time: put him on the floor facing away from you, walk in front of
+him and say* **"Hey Jarvis, follow me."** *He follows your black clothes from behind. "Hey Jarvis, stop" (or STOP).*
 
 **"Hey Jarvis, say bye."** *(a paw waves: "Bye everyone! Thank you for meeting me!")*
 > "Thank you!"
@@ -121,7 +123,7 @@ then the photo. Tap **< BACK** during the countdown to cancel.)*
 ## Cheat sheet
 | Want | Say ("Hey Jarvis, …") | Or tap |
 |---|---|---|
-| follow | follow me | FOLLOW ME (bottom left) |
+| follow (optional) | follow me | FOLLOW ME (bottom left) / remote |
 | stop | stop | red STOP (top) |
 | greet / goodbye | say hi to the judges / say bye | – |
 | sit | sit | – |
@@ -131,6 +133,7 @@ then the photo. Tap **< BACK** during the countdown to cancel.)*
 
 ## If something goes wrong
 - **He doesn't react:** say it again closer to your iPhone or the MacBook, and wait for the chime.
-- **He won't follow:** face him and stand about 2 m away in good light, or carry him: "He's shy in front of judges."
+- **He won't follow:** stand 1.5-2 m in front of him with your back to him, or skip it: "He's shy in front of judges."
+- **He doesn't hear you:** use the iPhone remote: TALK, speak, DONE. Every trick also has its own button.
 - **He doesn't recognise you:** "He's still learning: I only gave him one photo."
 - **He moves when he shouldn't:** tap STOP or say "Hey Jarvis, stop".
