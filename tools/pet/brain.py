@@ -193,10 +193,14 @@ class Brain:
             return "Exploring on my own"
         if c.mode == "curious":
             return self.curious_status or "Exploring"
-        names = sorted({d.name.capitalize() for d in self.dets if d.name != "unknown"}) if now - self.dets_stamp < 1 else []
-        if names:
-            return "I can see " + " and ".join(names)
-        if now - self.dets_stamp < 1 and self.dets:
+        dets = self.dets if now - self.dets_stamp < 1 else []
+        faces = [d for d in dets if d.kind == "face"]
+        owner = any(d.name == vision.OWNER for d in dets)
+        others = sum(1 for d in faces if d.name != vision.OWNER)   # only the owner is ever named
+        if owner:
+            return "I can see %s%s" % (vision.OWNER.capitalize(),
+                                       " and %d other %s" % (others, "person" if others == 1 else "people") if others else "")
+        if dets:
             return "I can see someone"
         return "Say \"Hey Jarvis\""
 

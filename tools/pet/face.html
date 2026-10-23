@@ -128,6 +128,7 @@ const MOVING = ["follow", "follow_straight", "go_to", "find", "wander", "curious
 function dotRect(W, H) { const r = Math.max(18, H * 0.035); return {x: W - r * 2.2, y: H - r * 2.2, r: r}; }
 function selfieDot(W, H) { const d = dotRect(W, H); return {x: d.x - d.r * 3.2, y: d.y, r: d.r * 0.8}; }
 function stopRect(W, H) { const w = W * 0.30, h = H * 0.13; return {x: (W - w) / 2, y: H * 0.03, w: w, h: h}; }
+function followRect(W, H) { const w = W * 0.20, h = H * 0.09; return {x: W * 0.02, y: H - h - H * 0.03, w: w, h: h}; }
 function snapRect(W, H) { const w = W * 0.30, h = H * 0.11; return {x: (W - w) / 2, y: H - h - H * 0.04, w: w, h: h}; }
 const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 let pressed = {name: "", at: 0};                           // brief visual feedback on a tap
@@ -137,6 +138,10 @@ cv.addEventListener("pointerdown", (e) => {
   const d = dotRect(W, H), sd = selfieDot(W, H);
   if (MOVING.includes(state.mode) && inRect(x, y, stopRect(W, H))) {
     post("/stop"); pressed = {name: "stop", at: Date.now()}; return;
+  }
+  if (!MOVING.includes(state.mode) && view() === "face" && !state.photo && inRect(x, y, followRect(W, H))) {
+    post("/command", {mode: "follow_straight", target: "any", timeout: 180});   // same as "Hey Jarvis, follow me"
+    pressed = {name: "follow", at: Date.now()}; return;
   }
   if (view() === "camera" && inRect(x, y, snapRect(W, H))) {
     post("/demo", {action: "snap"}); pressed = {name: "snap", at: Date.now()}; return;
@@ -162,6 +167,14 @@ function drawButtons(W, H) {
     g.save(); g.fillStyle = hit ? "#ffffff" : "#e5484d"; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3); g.fill();
     g.fillStyle = hit ? "#e5484d" : "#ffffff"; g.font = font(0.07); g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("STOP", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
+  }
+  if (!MOVING.includes(state.mode) && view() === "face" && !state.photo) {   // small FOLLOW ME button
+    const r = followRect(W, H), hit = pressed.name === "follow" && Date.now() - pressed.at < 500;
+    g.save(); g.globalAlpha = hit ? 1 : 0.75;
+    g.strokeStyle = C(); g.lineWidth = 3; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3);
+    if (hit) { g.fillStyle = C(); g.fill(); } else { g.stroke(); }
+    g.fillStyle = hit ? "#05070b" : C(); g.font = font(0.035); g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("FOLLOW ME", r.x + r.w / 2, r.y + r.h / 2 + 1); g.restore();
   }
   if (view() === "camera") {                                  // camera view: snap & send to Telegram
     const r = snapRect(W, H), hit = pressed.name === "snap" && Date.now() - pressed.at < 500;
