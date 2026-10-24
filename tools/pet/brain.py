@@ -152,6 +152,7 @@ class Brain:
         self.ptt = {"on": False, "since": 0.0}            # push-to-talk from the phone remote
         self.last_heard = {"text": "", "t": 0.0}
         self.said = {"text": "", "t": 0.0}                # caption: what Jarvis is saying right now
+        self.battery = None                                # Pi UPS battery {percent, charging}, for the screen
         self.showcase = False                              # exhibit mode: keep exploring, chat with people
         self.last_invite = 0.0
 
@@ -235,7 +236,7 @@ class Brain:
                     "friends": self.perception.friends.count(),
                     "faces": sum(1 for d in dets if d.kind == "face"),
                     "owner_here": any(d.name == vision.OWNER for d in dets),
-                    "boxes": self.screen_boxes(now),
+                    "boxes": self.screen_boxes(now), "battery": self.battery,
                     "said": self.said["text"] if now - self.said["t"] < self.caption_s(self.said["text"]) else "",
                     "heard": self.last_heard["text"] if now - self.last_heard["t"] < 10 else ""}
 
@@ -454,6 +455,16 @@ class Brain:
             self.body.drive(linear, 0.0)
             time.sleep(0.1)
         self.body.drive(0.0, 0.0)
+
+    def battery_loop(self):
+        """Read the Pi's battery (UPS HAT, via pi_io) every 30 s for the corner of the screen."""
+        while True:
+            try:
+                b = json.loads(urllib.request.urlopen(PI_IO + "/battery", timeout=5).read())
+                self.battery = {"percent": int(b["percent"]), "charging": bool(b.get("charging"))} if b.get("ok") else None
+            except (OSError, ValueError, KeyError):
+                self.battery = None
+            time.sleep(30)
 
     def set_showcase(self, on):
         """Exhibit mode: explore curiously, invite people to talk, pause while someone talks to Jarvis,
@@ -768,6 +779,7 @@ class Brain:
         threading.Thread(target=self.vision_loop, daemon=True).start()
         threading.Thread(target=self.control_loop, daemon=True).start()
         threading.Thread(target=self.curious_loop, daemon=True).start()
+        threading.Thread(target=self.battery_loop, daemon=True).start()
 
 
 def make_handler(brain):
