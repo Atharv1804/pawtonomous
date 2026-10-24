@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet
 import intents  # noqa: E402  instant local commands (stop, come here, find X, ...)
 import robot_media  # noqa: E402  Piper voice + Whisper loader shared with the MCP server
 import robot_power  # noqa: E402
+import quick_agent  # noqa: E402  fast local LLM with robot tools (default for spoken questions)
 
 ON_MAC = sys.platform == "darwin"   # the same loop runs on the Mac (MacBook mic) and on the Pi (robot mic)
 WHO = os.environ.get("VOICE_WHO") or ("mac" if ON_MAC else "pi")   # e.g. "iphone" for a 2nd Mac listener
@@ -51,6 +52,7 @@ END_SILENCE_S = 0.8               # this much quiet after speech = done talking
 CHIME_ECHO_S = 0.2 if ON_MAC else 0.6   # Pi: Bluetooth plays the chime ~0.3-0.5 s late; Mac: own speaker
 MAX_UTTERANCE_S = 12.0
 CONVERSATION_GAP_S = 300          # follow-ups within 5 minutes continue the same Hermes session
+AGENT = os.environ.get("VOICE_AGENT", "quick")   # "quick" = local LLM + robot tools (~1 s); "hermes" = Hermes
 HERMES = os.environ.get("VOICE_HERMES", os.path.expanduser("~/.local/bin/hermes"))
 API_URL = os.environ.get("HERMES_API_URL", "http://127.0.0.1:8642") + "/v1/chat/completions"   # Mac: :18642
 # Whisper hint: makes the robot's own vocabulary (and its name) more likely to be heard correctly.
@@ -372,7 +374,10 @@ def main():
                                                                os.environ.get("VOICE_WHISPER_MODEL", "base.en")))
     wake, mic = WakeWord(), (MacMic() if ON_MAC else Mic())
     noise = 300.0
-    session, last_turn = None, 0.0
+    session, last_turn, quick_history = None, 0.0, []
+    if AGENT == "quick":
+        import threading
+        threading.Thread(target=quick_agent.keep_warm, daemon=True).start()
     log("ready - say 'Hey Jarvis'")
     debug, n, loudest = bool(os.environ.get("VOICE_DEBUG")), 0, 0.0
 
@@ -441,9 +446,13 @@ def main():
         else:
             face("thinking", 60, "Thinking: \"%s\"" % (text[:40] + ("..." if len(text) > 40 else "")))
             if time.time() - last_turn > CONVERSATION_GAP_S:
-                session = None                          # long pause: start a fresh conversation
+                session, quick_history = None, []      # long pause: start a fresh conversation
             t1 = time.time()
-            reply, session = ask_hermes_api(text, session)
+            reply = None
+            if AGENT == "quick":
+                reply, quick_history = quick_agent.ask(text, quick_history, log=log)
+            if reply is None:
+                reply, session = ask_hermes_api(text, session)
             if reply is None and not _api_key() and os.path.exists(HERMES):   # no API server: use the CLI
                 reply = ask_hermes(text, session)
                 if reply and session is None:

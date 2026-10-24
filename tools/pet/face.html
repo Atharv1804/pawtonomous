@@ -170,7 +170,7 @@ function drawButtons(W, H) {
     g.fillStyle = hit ? "#e5484d" : "#ffffff"; g.font = font(0.07); g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("STOP", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
   }
-  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime()) {   // small FOLLOW ME button
+  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && !state.said) {   // small FOLLOW ME button
     const r = followRect(W, H), hit = pressed.name === "follow" && Date.now() - pressed.at < 500;
     g.save(); g.globalAlpha = hit ? 1 : 0.75;
     g.strokeStyle = C(); g.lineWidth = 3; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3);
@@ -325,6 +325,41 @@ function drawCam(W, H) {
   g.restore();
 }
 
+function wrapLines(text, maxW, maxLines) {
+  const words = text.split(/\s+/), lines = [];
+  let line = "";
+  for (const w of words) {
+    const t = line ? line + " " + w : w;
+    if (g.measureText(t).width > maxW && line) { lines.push(line); line = w; } else { line = t; }
+  }
+  if (line) lines.push(line);
+  if (lines.length > maxLines) {                       // long answers: show the latest part
+    const keep = lines.slice(-maxLines); keep[0] = "... " + keep[0]; return keep;
+  }
+  return lines;
+}
+function drawSaid(W, H, text) {
+  g.save();
+  const fs = Math.round(H * 0.055);
+  g.font = "600 " + fs + "px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  const lines = wrapLines(text, W * 0.86, 3), lh = fs * 1.25;
+  const bh = lines.length * lh + fs * 0.8, by = H - bh - H * 0.02;
+  g.fillStyle = "rgba(14, 22, 33, 0.92)"; roundRect(W * 0.05, by, W * 0.9, bh, fs * 0.6); g.fill();
+  g.strokeStyle = C(); g.lineWidth = 2; g.stroke();
+  g.fillStyle = "#e8f6fb"; g.textAlign = "center"; g.textBaseline = "middle";
+  lines.forEach((l, i) => g.fillText(l, W / 2, by + fs * 0.4 + lh * (i + 0.5)));
+  g.restore();
+}
+function drawHeard(W, H, text) {
+  g.save();
+  const fs = Math.round(H * 0.04);
+  g.font = "italic " + fs + "px -apple-system, 'Segoe UI', Roboto, sans-serif";
+  const line = wrapLines("You said: \u201c" + text + "\u201d", W * 0.8, 1)[0];
+  g.fillStyle = "rgba(125, 147, 163, 0.95)"; g.textAlign = "center"; g.textBaseline = "top";
+  g.fillText(line, W / 2, MOVING.includes(state.mode) ? H * 0.18 : H * 0.03);   // below STOP when moving
+  g.restore();
+}
+
 let lastDraw = 0;
 function drawZzz(W, H, ts) {
   if (cur.zzz < 0.5) return;
@@ -374,6 +409,9 @@ function frame(ts) {
   drawCam(W, H);
   drawZzz(W, H, ts);
   drawDot(W, H);
+  // captions: what Jarvis heard (top) and what he is saying (bottom, instead of the status line)
+  if (state.heard) drawHeard(W, H, state.heard);
+  if (state.said) { drawSaid(W, H, state.said); requestAnimationFrame(frame); return; }
   // status line: what the robot is doing right now
   const status = state.status || "";
   if (status) {

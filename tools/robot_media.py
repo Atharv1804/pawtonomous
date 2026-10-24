@@ -106,6 +106,7 @@ def say(text):
     text = (text or "").strip()
     if not text:
         return {"ok": False, "error": "nothing to say"}
+    _pet("POST", "/caption", {"text": text}, timeout=0.5)      # shown on the face screen while spoken
     if os.environ.get("ROBOT_SPEAK_VIA") == "pi_io":           # running on the Mac: robot speaker via tunnel
         wav = _http(MAC_AI_URL + "/tts", json.dumps({"text": text}).encode(), timeout=15)
         if not wav or wav[:4] != b"RIFF":

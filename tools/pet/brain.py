@@ -51,6 +51,12 @@ GREET_EVERY_S = 15 * 60       # say hi to the same person at most this often
 GREET_AFTER_ABSENT_S = 5 * 60  # ...and only if they were away this long
 IDLE_WANDER_AFTER_S = 3 * 60   # autonomy: wander a bit after this long idle with nobody around
 SLEEPY_AFTER_S = 5 * 60
+SHOWCASE_RESUME_S = float(os.environ.get("PET_SHOWCASE_RESUME_S", "45"))   # showcase: explore again after idle
+INVITE_EVERY_S = 40.0          # showcase: at most one "say Hey Jarvis" invitation this often
+INVITES = ["Hi there! I'm Jarvis. Say Hey Jarvis to talk to me!",
+           "Hello! Want to chat? Just say Hey Jarvis!",
+           "Hi friend! Say Hey Jarvis and ask me anything!",
+           "Ooh, a new friend! Say Hey Jarvis to me!"]
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 CURIOUS_MODEL = os.environ.get("PET_CURIOUS_MODEL", "qwen3.5:2b")   # small vision model on the Mac, ~1 s
 CURIOUS_PROMPT = (
@@ -145,6 +151,9 @@ class Brain:
         self.frame_wh = (640, 480)
         self.ptt = {"on": False, "since": 0.0}            # push-to-talk from the phone remote
         self.last_heard = {"text": "", "t": 0.0}
+        self.said = {"text": "", "t": 0.0}                # caption: what Jarvis is saying right now
+        self.showcase = False                              # exhibit mode: keep exploring, chat with people
+        self.last_invite = 0.0
 
     # ---------- events / speech / display ----------
     def event(self, ev):
@@ -155,6 +164,7 @@ class Brain:
 
     def say(self, text):
         """Speak on the robot: Mac synthesises (mac_ai /tts), the Pi only plays (pi_io /play)."""
+        self.said = {"text": text[:300], "t": time.time()}
         def run():
             try:
                 req = urllib.request.Request(MAC_AI + "/tts", json.dumps({"text": text}).encode(),
@@ -225,7 +235,14 @@ class Brain:
                     "friends": self.perception.friends.count(),
                     "faces": sum(1 for d in dets if d.kind == "face"),
                     "owner_here": any(d.name == vision.OWNER for d in dets),
-                    "boxes": self.screen_boxes(now)}
+                    "boxes": self.screen_boxes(now),
+                    "said": self.said["text"] if now - self.said["t"] < self.caption_s(self.said["text"]) else "",
+                    "heard": self.last_heard["text"] if now - self.last_heard["t"] < 10 else ""}
+
+    @staticmethod
+    def caption_s(text):
+        """How long a spoken sentence stays on screen: roughly its speaking time plus a moment to read."""
+        return 3.0 + 0.4 * len(text.split())
 
     def screen_boxes(self, now):
         """Face boxes for the robot screen, which shows the Pi's own camera feed and draws these on top
@@ -401,12 +418,20 @@ class Brain:
                 self.idle_since = now
                 continue
             if mode == "idle":
+                if (self.showcase and now - self.idle_since > SHOWCASE_RESUME_S and not self.talking_now(now)
+                        and self.anim["until"] < now):
+                    log("showcase: back to exploring")
+                    self.command("curious", timeout=3600)
+                    continue
                 self._autonomy_tick(now)
                 continue
             self.idle_since = now
             if mode == "curious":                          # driven by the vision-model loop
                 lin, ang, until = self.curious_cmd
                 self.exploring_until = 0.0
+                if self.talking_now(now):                  # someone said "Hey Jarvis": stand still and listen
+                    self.body.drive(0.0, 0.0)
+                    continue
                 self.body.drive(lin, ang) if now < until else self.body.drive(0.0, 0.0)
                 continue
             if act.explore:
@@ -429,6 +454,20 @@ class Brain:
             self.body.drive(linear, 0.0)
             time.sleep(0.1)
         self.body.drive(0.0, 0.0)
+
+    def set_showcase(self, on):
+        """Exhibit mode: explore curiously, invite people to talk, pause while someone talks to Jarvis,
+        and go back to exploring after SHOWCASE_RESUME_S of standing still."""
+        self.showcase = on
+        if on:
+            self.command("curious", timeout=3600)
+        else:
+            self.stop()
+        self.event({"showcase": on})
+        return {"ok": True, "showcase": on}
+
+    def talking_now(self, now):
+        return now < self.voice_claim["until"]
 
     def cancel_photo(self):
         """BACK during "Say cheese": no photo is taken; BACK on a shown photo closes it."""
@@ -614,6 +653,11 @@ class Brain:
                 self.curious_cmd = (0.0, 0.0, 0.0)
                 time.sleep(0.2)
                 continue
+            if self.talking_now(time.time()):              # in a conversation: don't look / remark
+                time.sleep(0.3)
+                continue
+            if self.showcase and self._invite_someone():
+                continue
             t0 = time.time()
             v = self._look()
             if self.ctrl.cmd.mode != "curious":
@@ -668,6 +712,23 @@ class Brain:
                 self._curious_do(0.0, 1.0 if left else -1.0, secs,
                                  "Something's in the way - turning %s" % ("left" if left else "right"), "focused")
                 time.sleep(secs)
+
+    def _invite_someone(self):
+        """Showcase: a face fairly close and looking at the robot -> stop, look happy, invite them to talk."""
+        now = time.time()
+        if now - self.last_invite < INVITE_EVERY_S:
+            return False
+        with self.lock:
+            dets = self.dets if now - self.dets_stamp < 1.0 else []
+        near = [d for d in dets if d.kind == "face" and (d.distance_m or 9) < 2.0]
+        if not near:
+            return False
+        self.last_invite = self.last_remark = now
+        self.gaze = max(-1.0, min(1.0, near[0].bearing_deg / (vision.HFOV_DEG / 2)))
+        self._curious_do(0.0, 0.0, 5.0, "Hi! Say \"Hey Jarvis\" to talk to me", "happy")
+        self.say(random.choice(INVITES))
+        time.sleep(5.0)
+        return True
 
     def _update_mood(self, dets, now):
         target = control.pick_target(dets, self.ctrl.cmd.target if self.ctrl.cmd.mode != "idle" else "any")
@@ -810,6 +871,11 @@ def make_handler(brain):
                     on = bool(p.get("on"))
                     brain.ptt = {"on": on, "since": time.time()}
                     return self._send(200, {"ok": True, "on": on})
+                if url.path == "/caption":                   # the voice loops: what Jarvis is saying
+                    brain.said = {"text": str(p.get("text", ""))[:300], "t": time.time()}
+                    return self._send(200, {"ok": True})
+                if url.path == "/showcase":
+                    return self._send(200, brain.set_showcase(bool(p.get("on", True))))
                 if url.path == "/heard":
                     brain.last_heard = {"text": str(p.get("text", ""))[:200], "t": time.time()}
                     return self._send(200, {"ok": True})
@@ -854,7 +920,7 @@ def remote_token():
 REMOTE_ACTIONS = {   # button -> what the brain does
     "follow": ("command", {"mode": "follow_straight", "target": "any", "timeout": 180}),
     "explore": ("command", {"mode": "curious", "timeout": 120}),
-    "stop": ("stop", None),
+    "stop": ("stop", None), "showcase_on": ("showcase", True), "showcase_off": ("showcase", False),
     "greet": ("demo", "greet"), "bye": ("demo", "bye"), "sit": ("demo", "sit"), "treat": ("demo", "treat"),
     "selfie": ("demo", "selfie"), "cancel": ("demo", "cancel"),
     "view_camera": ("demo", "view_camera"), "view_face": ("demo", "view_face"),
@@ -897,7 +963,7 @@ def make_remote_handler(brain, token):
                     st = {"status": brain.status_text(now), "mode": brain.ctrl.cmd.mode, "view": brain.view,
                           "talk": brain.ptt["on"], "heard": brain.last_heard["text"],
                           "heard_ago": round(now - brain.last_heard["t"], 1) if brain.last_heard["t"] else None,
-                          "friends": brain.perception.friends.count(),
+                          "friends": brain.perception.friends.count(), "showcase": brain.showcase,
                           "owner_here": any(d.name == vision.OWNER for d in brain.dets) if now - brain.dets_stamp < 1 else False}
                 return self._send(200, st)
             return self._send(404, {"ok": False})
@@ -923,6 +989,8 @@ def make_remote_handler(brain, token):
                     return self._send(200, brain.stop())
                 if kind == "demo":
                     return self._send(200, brain.trick(arg))
+                if kind == "showcase":
+                    return self._send(200, brain.set_showcase(arg))
                 return self._send(400, {"ok": False, "error": "unknown action"})
             return self._send(404, {"ok": False})
 
