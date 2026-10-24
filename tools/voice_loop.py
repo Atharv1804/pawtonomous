@@ -15,6 +15,7 @@ Environment (optional): VOICE_WHISPER_MODEL (default base.en), VOICE_WAKE_THRESH
 VOICE_HERMES (path to the hermes command).
 """
 
+import collections
 import glob
 import json
 import math
@@ -176,7 +177,7 @@ class WakeWord:
 
 def record_utterance(mic, noise_floor):
     """Record from the first speech until END_SILENCE_S of quiet. Returns int16 array or None."""
-    speech_level = max(noise_floor * 2.5, 400.0)
+    speech_level = max(noise_floor * 2.0, 400.0)
     frames, started, quiet, waited, run, peak = [], False, 0.0, 0.0, [], 0.0
     while True:
         f = mic.read()
@@ -413,12 +414,14 @@ def main():
 
     frame_n = 0
     burst, loud_n, quiet_n = [], 0, 0             # short speech bursts, checked for a bare "stop"
+    levels = collections.deque(maxlen=50)
     while True:
         f = mic.read()
         frame_n += 1
         level = rms(f)
-        if level < noise * 2:                         # learn room noise only from quiet frames,
-            noise = 0.98 * noise + 0.02 * level       # so speech does not raise the bar for speech
+        levels.append(level)
+        if frame_n % 5 == 0 and len(levels) >= 20:    # room noise = the quieter part of the last ~4 s
+            noise = max(150.0, float(np.percentile(levels, 20)))   # (adapts to a loud venue, ignores speech)
         if level > max(noise * 3.0, 500.0):
             burst.append(f); loud_n += 1; quiet_n = 0
         elif burst:

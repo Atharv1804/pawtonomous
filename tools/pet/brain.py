@@ -467,7 +467,10 @@ class Brain:
         return {"ok": True, "showcase": on}
 
     def speaking_now(self, now):
-        """Jarvis's own voice is playing (or just finished / about to start)."""
+        """Jarvis is saying "Jarvis" himself right now (invitations): his mics must not wake on it.
+        Other speech does not block the wake word, so visitors can interrupt his remarks."""
+        if "jarvis" not in self.said["text"].lower():
+            return False
         t = self.talk
         if t["envelope"] and t["start"] - 1.0 <= now <= t["start"] + len(t["envelope"]) * t["step"] + 1.5:
             return True
@@ -692,7 +695,8 @@ class Brain:
             log("curious: clear=%s ahead=%s side=%.2f -> %s, turn=%s remark=%r (%.1fs)" % (
                 clear, ahead, side_min, caution, turn, remark, time.time() - t0))
             now = time.time()
-            if remark and now - self.last_remark > REMARK_EVERY_S and random.random() < 0.7:
+            every = REMARK_EVERY_S * (2 if self.showcase else 1)   # showcase: leave room for visitors to talk
+            if remark and now - self.last_remark > every and random.random() < 0.7:
                 self.last_remark = now
                 pause = random.uniform(2.5, 4.5)
                 self._curious_do(0.0, 0.0, pause, remark[:60], "happy")
@@ -864,7 +868,8 @@ def make_handler(brain):
                             if c["who"] == who:
                                 brain.voice_claim = {"who": "", "until": 0.0}
                             return self._send(200, {"ok": True})
-                        if c["until"] > now and c["who"] != who:
+                        # the robot's own mic always wins: it is where visitors talk while it explores
+                        if c["until"] > now and c["who"] != who and who != "pi":
                             return self._send(200, {"ok": False, "holder": c["who"]})
                         brain.voice_claim = {"who": who, "until": now + min(secs, 120.0)}
                     return self._send(200, {"ok": True})
