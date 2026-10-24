@@ -60,15 +60,20 @@ INVITES = ["Hi there! I'm Jarvis. Say Hey Jarvis to talk to me!",
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 CURIOUS_MODEL = os.environ.get("PET_CURIOUS_MODEL", "qwen3.5:2b")   # small vision model on the Mac, ~1 s
 CURIOUS_PROMPT = (
-    "You are the eyes of a small robot car. This photo is what it sees straight ahead. Reply with JSON only:\n"
-    '{"path_clear": true or false (is the floor straight ahead free of obstacles, furniture, walls or '
+    "You are the eyes of a small, LOW robot car that loves to explore far-away places. This photo is what "
+    "it sees straight ahead; the camera is tilted UP, so ignore ceilings, lights, table tops and people's "
+    "upper bodies: only things standing on the floor in its way matter. Reply with JSON only:\n"
+    '{"path_clear": true or false (is the floor straight ahead free of obstacles, furniture legs, walls or '
     'people for about one metre?), "ahead": "far" or "medium" or "near" (how close is the nearest '
-    'obstacle, wall or corner straight ahead?), "turn": "left" or "right" (which side looks more open), '
+    'obstacle, wall or corner on the floor straight ahead?), "turn": "left" or "right" (which side looks '
+    'more open), "open": "left" or "ahead" or "right" (where is the biggest, most open, farthest-away '
+    'space to explore?), '
     '"interesting": "a short curious, friendly comment of at most 8 words about the most interesting OBJECT '
     'or place you see, for example Ooh, a big shiny ball! If the most notable thing is a person, just greet '
     'them warmly (for example Hi there, friend!) and never describe their body, clothes or looks. Empty '
     'string if nothing stands out"}')
 REMARK_EVERY_S = 15.0
+TRIP_EVERY_S = 75.0            # explore: now and then head off toward the most open, far-away space
 GREETING = "Hi everyone, I'm Jarvis, Atharv's pet! It's really nice to meet you all!"
 GOODBYE = "Bye everyone! Thank you for meeting me!"
 DEMO_LINES = [GOODBYE, GREETING, "Yummy! Thank you!", "Say cheese!", "Got it! Sending it to Atharv's Telegram.",
@@ -155,6 +160,7 @@ class Brain:
         self.battery = None                                # Pi UPS battery {percent, charging}, for the screen
         self.showcase = False                              # exhibit mode: keep exploring, chat with people
         self.last_invite = 0.0
+        self.last_trip = time.time()
         self.turns_in_row = 0                              # curious: turns since the last forward step
         self.last_voice = 0.0                              # last time someone talked to Jarvis
 
@@ -713,8 +719,9 @@ class Brain:
                 clear, caution = True, "medium"              # stuck turning in one place: push on
             self.turns_in_row = 0 if clear else self.turns_in_row + 1
             turn = str(v.get("turn") or "left").lower()
-            log("curious: clear=%s ahead=%s side=%.2f -> %s, turn=%s remark=%r (%.1fs)" % (
-                clear, ahead, side_min, caution, turn, remark, time.time() - t0))
+            open_side = str(v.get("open") or "ahead").lower()
+            log("curious: clear=%s ahead=%s side=%.2f -> %s, turn=%s open=%s remark=%r (%.1fs)" % (
+                clear, ahead, side_min, caution, turn, open_side, remark, time.time() - t0))
             now = time.time()
             every = REMARK_EVERY_S * (2 if self.showcase else 1)   # showcase: leave room for visitors to talk
             if remark and now - self.last_remark > every and random.random() < 0.7:
@@ -731,11 +738,21 @@ class Brain:
                 pause = random.uniform(1.5, 3.5)
                 self._curious_do(0.0, 0.0, pause, "Looking around...", "curious")
                 time.sleep(pause)
+            elif now - self.last_trip > TRIP_EVERY_S and sonar_ok:
+                # New adventure: turn toward the most open, far-away space and head off there.
+                self.last_trip = now
+                left = open_side == "left" or (open_side == "ahead" and random.random() < 0.5)
+                secs = random.uniform(1.5, 3.0)
+                self._curious_do(0.0, 1.0 if left else -1.0, secs, "Ooh, let's go explore over there!", "happy")
+                time.sleep(secs)
+                self.turns_in_row = 0
             elif clear:
-                speed, step, label = {"far": (0.25, random.uniform(2.5, 3.5), "Exploring - off I go!"),
-                                      "medium": (0.2, random.uniform(1.2, 1.8), "Exploring - going slowly"),
+                speed, step, label = {"far": (0.28, random.uniform(3.5, 5.0), "Exploring - off I go!"),
+                                      "medium": (0.2, random.uniform(1.5, 2.2), "Exploring - going slowly"),
                                       "near": (0.12, 0.6, "Careful - creeping forward")}[caution]
-                self._curious_do(speed, 0.0, step, label)
+                # curve gently toward the most open, far-away space
+                curve = {"left": 0.3, "right": -0.3}.get(open_side, 0.0) if caution != "near" else 0.0
+                self._curious_do(speed, curve, step, label)
                 time.sleep(step * 0.8)                       # keep driving most of the step before looking again
             else:
                 # Obstacle: turn toward the open side. Left = tank spin; right = slower pivot.
