@@ -53,6 +53,8 @@ SPEECH_START_FRAMES = 5           # ~0.4 s of loud audio = speech (the 0.24 s ch
 END_SILENCE_S = 0.8               # this much quiet after speech = done talking
 CHIME_ECHO_S = 0.2 if ON_MAC else 0.6   # Pi: Bluetooth plays the chime ~0.3-0.5 s late; Mac: own speaker
 MAX_UTTERANCE_S = 12.0
+FOLLOW_UP_S = 6.0                 # after an answer, keep listening this long for a reply (no wake word)
+MAX_FOLLOW_UPS = 6                # then they need "Hey Jarvis" again
 CONVERSATION_GAP_S = 300          # follow-ups within 5 minutes continue the same Hermes session
 AGENT = os.environ.get("VOICE_AGENT", "quick")   # "quick" = local LLM + robot tools (~1 s); "hermes" = Hermes
 HERMES = os.environ.get("VOICE_HERMES", os.path.expanduser("~/.local/bin/hermes"))
@@ -175,7 +177,7 @@ class WakeWord:
         self.model.reset()
 
 
-def record_utterance(mic, noise_floor):
+def record_utterance(mic, noise_floor, start_timeout=START_TIMEOUT_S):
     """Record from the first speech until END_SILENCE_S of quiet. Returns int16 array or None."""
     speech_level = max(noise_floor * 2.0, 400.0)
     frames, started, quiet, waited, run, peak = [], False, 0.0, 0.0, [], 0.0
@@ -187,7 +189,7 @@ def record_utterance(mic, noise_floor):
             run = run + [f] if loud else []           # consecutive loud frames so far
             if len(run) >= SPEECH_START_FRAMES:
                 started, frames = True, run
-            elif waited > START_TIMEOUT_S:
+            elif waited > start_timeout:
                 return None
             continue
         frames.append(f)
@@ -415,6 +417,7 @@ def main():
     frame_n = 0
     burst, loud_n, quiet_n = [], 0, 0             # short speech bursts, checked for a bare "stop"
     levels = collections.deque(maxlen=50)
+    follow_up = 0                                 # >0: in a conversation, listen again without the wake word
     while True:
         f = mic.read()
         frame_n += 1
@@ -435,7 +438,7 @@ def main():
             burst, loud_n, quiet_n = [], 0, 0
         fired = wake.heard(f)
         pushed = PTT and frame_n % 3 == 0 and ptt_on()   # TALK pressed on the phone remote
-        fired = fired or pushed
+        fired = fired or pushed or follow_up > 0
         if debug:                                     # VOICE_DEBUG=1: loudness + best wake score every 2 s
             n, loudest = n + 1, max(loudest, rms(f))
             if n % 25 == 0:
@@ -443,7 +446,7 @@ def main():
                 loudest, wake.best = 0.0, 0.0
         if not fired:
             continue
-        if not pushed and speaking_now():             # Jarvis said "Hey Jarvis" himself (invitations)
+        if not pushed and not follow_up and speaking_now():             # Jarvis said "Hey Jarvis" himself (invitations)
             log("wake word ignored: that was my own voice")
             wake.reset()
             continue
@@ -453,16 +456,18 @@ def main():
             log("wake word (the %s mic is handling it)" % json.loads(claim).get("holder"))
             wake.reset()
             continue
-        log("push-to-talk" if pushed else "wake word")
-        face("listening", 25 if pushed else 15, "Listening...")
+        in_conversation = follow_up > 0 and not pushed
+        log("push-to-talk" if pushed else "listening for a reply" if in_conversation else "wake word")
+        face("listening", 25 if pushed else 15, "I'm listening - just talk" if in_conversation else "Listening...")
         play(wake_wav)
         if pushed:
             audio = record_ptt(mic)
         else:
             mic.drain(CHIME_ECHO_S)
-            audio = record_utterance(mic, noise)
+            audio = record_utterance(mic, noise, FOLLOW_UP_S if in_conversation else START_TIMEOUT_S)
+        follow_turns, follow_up = follow_up, 0
         if audio is None:
-            log("no speech after wake word")
+            log("conversation over (nobody replied)" if in_conversation else "no speech after wake word")
             face("neutral", 0.1)
             robot_media._pet("POST", "/voice_claim", {"who": WHO, "seconds": 0}, timeout=1)
             wake.reset()
@@ -482,7 +487,9 @@ def main():
         log("heard (%.1fs audio, %.1fs stt on %s): %r" % (len(audio) / RATE, time.time() - t0,
                                                          getattr(transcribe, "where", "?"), text))
         quick = fast_path(text) if len(text) >= 2 else None
-        if len(text) < 2:
+        if len(text) < 2 and in_conversation:           # just room noise: end the conversation quietly
+            face("neutral", 0.1, "")
+        elif len(text) < 2:
             face("sad", 2, "Didn't catch that")
             robot_media.say("Sorry, I didn't catch that.")
         elif quick is not None:
@@ -490,6 +497,8 @@ def main():
             if quick:                                   # tricks ("") speak and animate in the brain
                 face("happy", 2, "")
                 robot_media.say(quick)
+                if not re.search(r"\bstop", quick, re.I):   # after "stop": no follow-up
+                    follow_up = follow_turns + 1
             else:
                 robot_media._pet("POST", "/status", {"text": "", "seconds": 0}, timeout=0.5)
         else:
@@ -511,6 +520,7 @@ def main():
                 last_turn = time.time()
                 face("happy", 1, "")
                 robot_media.say(speakable(reply))
+                follow_up = follow_turns + 1                # keep the conversation going
             else:
                 face("sad", 3, "My brain is not reachable")
                 robot_media.say("Sorry, my brain is not reachable right now.")
@@ -520,6 +530,8 @@ def main():
         mic = MacMic() if ON_MAC else Mic()
         mic.drain(0.3)
         wake.reset()
+        if follow_up > MAX_FOLLOW_UPS:
+            follow_up = 0
 
 
 if __name__ == "__main__":

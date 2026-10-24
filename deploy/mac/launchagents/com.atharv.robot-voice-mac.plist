@@ -14,6 +14,8 @@
 		<string>http://127.0.0.1:8766</string>
 		<key>PI_IO_URL</key>
 		<string>http://127.0.0.1:18767</string>
+		<key>VOICE_PTT</key>
+		<string>1</string>
 		<key>ROBOT_SPEAK_VIA</key>
 		<string>pi_io</string>
 	</dict>
