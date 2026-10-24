@@ -122,22 +122,32 @@ def test_follow_me_follows_only_the_owner_and_steers():
     assert intents.parse("follow me")["mode"] == "follow_straight"
 
 
-def body(bearing=0.0, dist=2.0, dark=0.7, box=(0.4, 0.2, 0.6, 0.8), name="unknown"):
-    return Detection(name=name, kind="person", bearing_deg=bearing, distance_m=dist, score=0.6, dark=dark, box=box)
+RED, BLUE = (0.8, 0.2, 0.0, 0.0), (0.0, 0.0, 0.3, 0.7)        # clothes fingerprints (normalised histograms)
 
 
-def test_follow_me_follows_a_dark_clothed_back():
+def body(bearing=0.0, dist=2.0, sig=RED, box=(0.4, 0.2, 0.6, 0.8), name="unknown"):
+    return Detection(name=name, kind="person", bearing_deg=bearing, distance_m=dist, score=0.6, sig=sig, box=box)
+
+
+def test_follow_me_locks_onto_one_person_by_their_clothes():
     c = Controller(); c.set("follow_straight", "any", now=0)
-    a = c.step([body(0, 2.5, dark=0.1)], FAR, now=0.1, dt=0.1)
-    assert a.linear == 0 and a.angular == 0                      # light clothes: not Atharv
-    a = c.step([body(0, 2.5, dark=0.1), body(3, 2.5, dark=0.7)], FAR, now=0.2, dt=0.1)
-    assert a.linear > 0                                          # all black, seen from behind: follow
-    assert c.cmd.last_bearing == 3
-    a = c.step([body(5, 2.5, dark=0.65), body(-60, 2.0, dark=0.9)], FAR, now=0.3, dt=0.1)
-    assert c.cmd.last_bearing == 5                               # another dark person far off: no jump
-    a = c.step([body(0, 2.5, dark=0.7, box=(0.2, 0.0, 0.8, 1.0))], FAR, now=0.4, dt=0.1)
+    a = c.step([body(5, 2.5, RED), body(60, 1.5, BLUE)], FAR, now=0.1, dt=0.1)
+    assert a.linear > 0 and c.cmd.extra["bearing"] == 5          # locks onto the person in front
+    a = c.step([body(12, 2.5, RED), body(8, 2.0, BLUE)], FAR, now=0.2, dt=0.1)
+    assert c.cmd.extra["bearing"] == 12                          # someone else walks close by: ignored
+    a = c.step([body(0, 2.5, RED, box=(0.2, 0.0, 0.8, 1.0))], FAR, now=0.3, dt=0.1)
     assert a.linear == 0                                         # fills the picture: right in front, stop
-    a = c.step([face("atharv", 2, 2.5)], FAR, now=0.5, dt=0.1)
+    a = c.step([body(0, 2.5, BLUE)], FAR, now=2.0, dt=0.1)
+    assert a.linear == 0 and a.angular == 0                      # only a stranger left: stand still
+    a = c.step([body(-20, 2.5, RED)], FAR, now=3.0, dt=0.1)
+    assert a.linear > 0 or a.angular != 0                        # the same clothes again: follow again
+
+
+def test_follow_me_prefers_the_owner_and_his_face():
+    c = Controller(); c.set("follow_straight", "any", now=0)
+    c.step([body(20, 1.5, BLUE), body(-10, 2.5, RED, name="atharv")], FAR, now=0.1, dt=0.1)
+    assert c.cmd.extra["sig"] == RED                             # his body (face inside) wins the lock-on
+    a = c.step([face("atharv", 2, 2.5)], FAR, now=0.2, dt=0.1)
     assert a.linear > 0                                          # facing the robot: his face works too
 
 

@@ -129,6 +129,7 @@ function dotRect(W, H) { const r = Math.max(18, H * 0.035); return {x: W - r * 2
 function selfieDot(W, H) { const d = dotRect(W, H); return {x: d.x - d.r * 3.2, y: d.y, r: d.r * 0.8}; }
 function stopRect(W, H) { const w = W * 0.30, h = H * 0.13; return {x: (W - w) / 2, y: H * 0.03, w: w, h: h}; }
 function followRect(W, H) { const w = W * 0.20, h = H * 0.09; return {x: W * 0.02, y: H - h - H * 0.03, w: w, h: h}; }
+function exploreRect(W, H) { const f = followRect(W, H); return {x: f.x, y: f.y - f.h - H * 0.025, w: f.w, h: f.h}; }
 function backRect(W, H) { const w = W * 0.20, h = H * 0.11; return {x: W * 0.03, y: H * 0.04, w: w, h: h}; }
 const selfieTime = () => (state.anim && state.anim.name === "countdown") || !!state.photo;
 const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -147,6 +148,10 @@ cv.addEventListener("pointerdown", (e) => {
   if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && inRect(x, y, followRect(W, H))) {
     post("/command", {mode: "follow_straight", target: "any", timeout: 180});   // same as "Hey Jarvis, follow me"
     pressed = {name: "follow", at: Date.now()}; return;
+  }
+  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && inRect(x, y, exploreRect(W, H))) {
+    post("/showcase", {on: true});                           // explore + chat with people (showcase mode)
+    pressed = {name: "explore", at: Date.now()}; return;
   }
   if (Math.hypot(x - sd.x, y - sd.y) < sd.r * 2.2) {
     post("/demo", {action: "selfie"}); pressed = {name: "selfie", at: Date.now()}; return;
@@ -170,13 +175,15 @@ function drawButtons(W, H) {
     g.fillStyle = hit ? "#e5484d" : "#ffffff"; g.font = font(0.07); g.textAlign = "center"; g.textBaseline = "middle";
     g.fillText("STOP", r.x + r.w / 2, r.y + r.h / 2 + 2); g.restore();
   }
-  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && !state.said) {   // small FOLLOW ME button
-    const r = followRect(W, H), hit = pressed.name === "follow" && Date.now() - pressed.at < 500;
-    g.save(); g.globalAlpha = hit ? 1 : 0.75;
-    g.strokeStyle = C(); g.lineWidth = 3; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3);
-    if (hit) { g.fillStyle = C(); g.fill(); } else { g.stroke(); }
-    g.fillStyle = hit ? "#05070b" : C(); g.font = font(0.035); g.textAlign = "center"; g.textBaseline = "middle";
-    g.fillText("FOLLOW ME", r.x + r.w / 2, r.y + r.h / 2 + 1); g.restore();
+  if (!MOVING.includes(state.mode) && view() === "face" && !selfieTime() && !state.said) {   // FOLLOW ME + EXPLORE
+    for (const [name, label, r] of [["follow", "FOLLOW ME", followRect(W, H)], ["explore", "EXPLORE", exploreRect(W, H)]]) {
+      const hit = pressed.name === name && Date.now() - pressed.at < 500;
+      g.save(); g.globalAlpha = hit ? 1 : 0.75;
+      g.strokeStyle = C(); g.lineWidth = 3; roundRect(r.x, r.y, r.w, r.h, r.h * 0.3);
+      if (hit) { g.fillStyle = C(); g.fill(); } else { g.stroke(); }
+      g.fillStyle = hit ? "#05070b" : C(); g.font = font(0.035); g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 1); g.restore();
+    }
   }
   if (selfieTime()) {                                          // BACK: cancel the selfie
     const r = backRect(W, H), hit = pressed.name === "back" && Date.now() - pressed.at < 500;

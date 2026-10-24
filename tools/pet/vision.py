@@ -343,6 +343,7 @@ class Perception:
                 dets.append(Detection(name=name, kind="person", bearing_deg=round(self._bearing((x1 + x2) / 2, w), 1),
                                       distance_m=self._distance(y2 - y1, w, PERSON_HEIGHT_M), score=round(conf, 2),
                                       dark=torso_darkness(img, x1, y1, x2, y2),
+                                      sig=clothes_signature(img, x1, y1, x2, y2),
                                       box=(x1 / w, y1 / h, x2 / w, y2 / h)))
                 boxes.append(("person", name, x1, y1, x2, y2))
             self._persons_cache = [d for d in dets if d.kind == "person"], [b for b in boxes if b[0] == "person"]
@@ -396,6 +397,20 @@ def _iou(a, b):
     inter = ix * iy
     union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
     return inter / union if union > 0 else 0.0
+
+
+def clothes_signature(img, x1, y1, x2, y2):
+    """Colour fingerprint of a person's clothes (centre of the torso + upper legs, so little background):
+    a normalised hue/saturation/brightness histogram. "Follow me" locks onto it to keep following the
+    same person, whatever they wear and even from behind."""
+    bw, bh = x2 - x1, y2 - y1
+    crop = img[max(0, int(y1 + bh * 0.25)):int(y1 + bh * 0.75), max(0, int(x1 + bw * 0.3)):int(x2 - bw * 0.3)]
+    if crop.size < 30:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256]).flatten()
+    total = float(hist.sum())
+    return tuple(round(float(v) / total, 4) for v in hist) if total else None
 
 
 def torso_darkness(img, x1, y1, x2, y2):

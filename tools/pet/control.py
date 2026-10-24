@@ -45,6 +45,7 @@ FOLLOW_TURN_SCALE = 0.35      # only gentle corrections while driving
 FOLLOW_ALIGN_DEG = 45.0       # keep driving (with a gentle correction) while the owner is within this angle
 FOLLOW_DARK_MIN = 0.40       # "follow me": a body this dark (Atharv wears all black) counts as him
 FOLLOW_MAX_JUMP_DEG = 35.0   # ...but never jump to someone far from where he just was
+FOLLOW_MATCH_MIN = 0.60      # clothes fingerprint similarity (0..1) to count as the same person
 FOLLOW_CLOSE_H = 0.85        # body box this tall / wide in the picture = right in front: don't drive
 FOLLOW_CLOSE_W = 0.45
 FOLLOW_SMOOTH = 0.25          # steering low-pass: new = old + 0.25 * (target - old) -> no twitching
@@ -60,6 +61,7 @@ class Detection:
     score: float = 1.0
     dark: float = 0.0          # person boxes: share of very dark pixels on the torso (black clothes ~0.6+)
     box: tuple = None          # (x1, y1, x2, y2) as 0..1 of the frame
+    sig: tuple = None          # person boxes: colour fingerprint of the clothes (normalised histogram)
 
 
 @dataclass
@@ -104,6 +106,13 @@ def pick_target(dets, target):
     t = target.strip().lower()
     named = [d for d in dets if d.name.lower() == t]
     return max(named, key=lambda d: d.score) if named else None
+
+
+def similarity(a, b):
+    """Bhattacharyya coefficient of two normalised histograms: 1 = identical colours, 0 = nothing alike."""
+    if not a or not b:
+        return 0.0
+    return sum(math.sqrt(x * y) for x, y in zip(a, b))
 
 
 def steer(bearing_deg):
@@ -168,20 +177,42 @@ class Controller:
 
     @staticmethod
     def _follow_pick(c, dets, now):
-        """Who "follow me" follows: a dark-clothed body or the owner's face, preferring whoever is
-        closest to where the followed person just was."""
+        """Who "follow me" follows. First LOCK ON: the owner (face recognised, or his body with his face
+        in it), else the nearest person in front. Then keep following whoever matches that person's clothes
+        fingerprint and is near where they just were; the owner's face always counts too."""
         name = OWNER_NAME if is_any(c.target) else c.target.lower()
-        cands = [d for d in dets if d.name.lower() == name or (d.kind == "person" and d.dark >= FOLLOW_DARK_MIN)]
+        people = [d for d in dets if d.kind == "person"]
+        faces = [d for d in dets if d.kind == "face" and d.name.lower() == name]
         recent = c.extra.get("owner_seen") is not None and now - c.extra["owner_seen"] < 1.5
-        if recent:                                           # same person: no sudden jumps across the room
-            cands = [d for d in cands if abs(d.bearing_deg - c.extra["bearing"]) <= FOLLOW_MAX_JUMP_DEG]
+        sig = c.extra.get("sig")
+        if sig is None:                                      # lock on
+            named = [d for d in people if d.name.lower() == name and d.sig]
+            if named:
+                pick = max(named, key=lambda d: d.score)
+            elif faces:                                      # only his face (body cut off): follow the face
+                return max(faces, key=lambda d: d.score)
+            else:
+                ahead = [d for d in people if d.sig and abs(d.bearing_deg) < 30]
+                if not ahead:
+                    return None
+                pick = min(ahead, key=lambda d: (d.distance_m or 9.0) + abs(d.bearing_deg) / 30.0)
+            c.extra["sig"] = pick.sig
+            return pick
+        cands = []
+        for d in people + faces:
+            if recent and abs(d.bearing_deg - c.extra["bearing"]) > FOLLOW_MAX_JUMP_DEG:
+                continue                                     # no sudden jumps across the room
+            match = similarity(sig, d.sig) if d.kind == "person" else 0.0
+            owner = d.name.lower() == name
+            if owner or match >= FOLLOW_MATCH_MIN:
+                jump = abs(d.bearing_deg - c.extra["bearing"]) / 90.0 if recent else 0.0
+                cands.append((match + (0.5 if owner else 0.0) + (0.2 if d.kind == "person" else 0.0) - jump, d, match))
         if not cands:
             return None
-
-        def score(d):
-            s = (1.0 if d.name.lower() == name else 0.0) + d.dark + (0.3 if d.kind == "person" else 0.0)
-            return s - (abs(d.bearing_deg - c.extra["bearing"]) / 90.0 if recent else 0.0)
-        return max(cands, key=score)
+        _, pick, match = max(cands, key=lambda t: t[0])
+        if pick.kind == "person" and pick.sig and match >= 0.7:   # slowly adapt to light changes
+            c.extra["sig"] = tuple(0.9 * a + 0.1 * b for a, b in zip(sig, pick.sig))
+        return pick
 
     def step(self, dets, ranges, now, dt):
         """One control tick. dets: list[Detection]; ranges: {'left','center','right': metres|None}."""
