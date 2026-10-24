@@ -155,6 +155,8 @@ class Brain:
         self.battery = None                                # Pi UPS battery {percent, charging}, for the screen
         self.showcase = False                              # exhibit mode: keep exploring, chat with people
         self.last_invite = 0.0
+        self.turns_in_row = 0                              # curious: turns since the last forward step
+        self.last_voice = 0.0                              # last time someone talked to Jarvis
 
     # ---------- events / speech / display ----------
     def event(self, ev):
@@ -419,7 +421,8 @@ class Brain:
                 self.idle_since = now
                 continue
             if mode == "idle":
-                if (self.showcase and now - self.idle_since > SHOWCASE_RESUME_S and not self.talking_now(now)
+                if (self.showcase and now - max(self.idle_since, self.last_voice) > SHOWCASE_RESUME_S
+                        and not self.talking_now(now)
                         and self.anim["until"] < now):
                     log("showcase: back to exploring")
                     self.command("curious", timeout=3600)
@@ -701,7 +704,14 @@ class Brain:
                 caution = "medium"
             else:
                 caution = "far"
-            clear = bool(v.get("path_clear")) and not (ahead == "near" and side_min < 0.6)
+            # The camera is tilted up: it sees tables / people at chest height and calls them "near"
+            # far too often (95% "not clear" -> spinning on the spot). So: drive forward unless BOTH
+            # the camera says "near" and a side sonar is close; after two turns in a row, go anyway.
+            sonar_ok = side_min > 0.4
+            clear = (ahead != "near" and sonar_ok) or bool(v.get("path_clear")) and sonar_ok
+            if not clear and self.turns_in_row >= 2 and sonar_ok:
+                clear, caution = True, "medium"              # stuck turning in one place: push on
+            self.turns_in_row = 0 if clear else self.turns_in_row + 1
             turn = str(v.get("turn") or "left").lower()
             log("curious: clear=%s ahead=%s side=%.2f -> %s, turn=%s remark=%r (%.1fs)" % (
                 clear, ahead, side_min, caution, turn, remark, time.time() - t0))
@@ -722,15 +732,17 @@ class Brain:
                 self._curious_do(0.0, 0.0, pause, "Looking around...", "curious")
                 time.sleep(pause)
             elif clear:
-                speed, step, label = {"far": (0.22, random.uniform(1.2, 1.6), "Exploring - way looks clear"),
-                                      "medium": (0.15, 0.6, "Something ahead - going slowly"),
-                                      "near": (0.1, 0.3, "Careful - creeping forward")}[caution]
+                speed, step, label = {"far": (0.25, random.uniform(2.5, 3.5), "Exploring - off I go!"),
+                                      "medium": (0.2, random.uniform(1.2, 1.8), "Exploring - going slowly"),
+                                      "near": (0.12, 0.6, "Careful - creeping forward")}[caution]
                 self._curious_do(speed, 0.0, step, label)
-                time.sleep(min(step, 1.0))
+                time.sleep(step * 0.8)                       # keep driving most of the step before looking again
             else:
                 # Obstacle: turn toward the open side. Left = tank spin; right = slower pivot.
                 left = turn != "right" or random.random() < 0.3
                 secs = random.uniform(0.8, 1.8) if caution == "far" else random.uniform(0.6, 1.0)
+                if self.turns_in_row >= 2:                    # big turn to leave this spot for good
+                    secs = random.uniform(1.5, 2.5)
                 self._curious_do(0.0, 1.0 if left else -1.0, secs,
                                  "Something's in the way - turning %s" % ("left" if left else "right"), "focused")
                 time.sleep(secs)
@@ -879,11 +891,16 @@ def make_handler(brain):
                         if secs <= 0:                      # release (only by the holder)
                             if c["who"] == who:
                                 brain.voice_claim = {"who": "", "until": 0.0}
+                                brain.last_voice = now
                             return self._send(200, {"ok": True})
                         # the robot's own mic always wins: it is where visitors talk while it explores
                         if c["until"] > now and c["who"] != who and who != "pi":
                             return self._send(200, {"ok": False, "holder": c["who"]})
                         brain.voice_claim = {"who": who, "until": now + min(secs, 120.0)}
+                        brain.last_voice = now
+                    # someone talks to Jarvis: stop exploring (unless they just asked him to explore)
+                    if brain.ctrl.cmd.mode == "curious" and now - brain.ctrl.cmd.started > 20:
+                        brain.stop()
                     return self._send(200, {"ok": True})
                 if url.path == "/vision_pause":
                     brain.vision_paused_until = time.time() + max(0.0, min(15.0, float(p.get("seconds", 5))))
