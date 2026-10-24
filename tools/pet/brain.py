@@ -466,6 +466,13 @@ class Brain:
         self.event({"showcase": on})
         return {"ok": True, "showcase": on}
 
+    def speaking_now(self, now):
+        """Jarvis's own voice is playing (or just finished / about to start)."""
+        t = self.talk
+        if t["envelope"] and t["start"] - 1.0 <= now <= t["start"] + len(t["envelope"]) * t["step"] + 1.5:
+            return True
+        return now - self.said["t"] < 2.0                  # said, audio still being made / sent
+
     def talking_now(self, now):
         return now < self.voice_claim["until"]
 
@@ -796,6 +803,8 @@ def make_handler(brain):
                 if brain.ptt["on"] and time.time() - brain.ptt["since"] > 25:   # forgotten: auto-off
                     brain.ptt = {"on": False, "since": time.time()}
                 return self._send(200, {"on": brain.ptt["on"]})
+            if url.path == "/speaking":                      # voice loops: ignore our own "Hey Jarvis"
+                return self._send(200, {"speaking": brain.speaking_now(time.time())})
             if url.path == "/display":
                 return self._send(200, brain.display())
             if url.path == "/faces":

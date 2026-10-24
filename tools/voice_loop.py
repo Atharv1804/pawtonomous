@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -236,6 +237,36 @@ def transcribe(audio):
 WAKE_ONLY = re.compile(r"^\W*((hey|hi|ok|okay|a)\W+)?(jarvis|jarvi|travis|service)\W*$", re.I)
 
 
+# "Stop" works WITHOUT the wake word: short bursts of speech are checked, and only an utterance that is
+# basically just "stop" counts (so "don't stop" or a sentence with stop in it does not).
+STOP_WORDS = re.compile(r"^\W*((hey\W+)?jarvis\W+)?(stop|stop it|stop now|stop stop|please stop|halt|freeze)"
+                        r"(\W+(jarvis|please|now))?\W*$", re.I)
+STOP_MIN_FRAMES, STOP_MAX_FRAMES = 3, 20      # 0.24-1.6 s of speech
+stop_busy = {"on": False}
+
+
+def check_stop(frames):
+    """Background: transcribe a short burst of speech; if it was "stop", stop everything at once."""
+    try:
+        text = robot_media.stt(np.concatenate(frames).astype(np.int16))[0]
+        if STOP_WORDS.match(text or ""):
+            log("STOP heard (no wake word): %r" % text)
+            robot_media._pet("POST", "/stop", {}, timeout=2)
+            face("neutral", 3, "Stopped")
+    except Exception as e:                    # never let this kill the listener
+        log("stop check failed: %r" % e)
+    finally:
+        stop_busy["on"] = False
+
+
+def speaking_now():
+    raw = robot_media._pet("GET", "/speaking", timeout=0.5)
+    try:
+        return bool(json.loads(raw)["speaking"]) if raw else False
+    except (ValueError, KeyError):
+        return False
+
+
 PHANTOM = re.compile(r"^\W*(you|thank you|thanks for watching|thank you for watching)\W*$", re.I)
 
 
@@ -376,18 +407,29 @@ def main():
     noise = 300.0
     session, last_turn, quick_history = None, 0.0, []
     if AGENT == "quick":
-        import threading
         threading.Thread(target=quick_agent.keep_warm, daemon=True).start()
     log("ready - say 'Hey Jarvis'")
     debug, n, loudest = bool(os.environ.get("VOICE_DEBUG")), 0, 0.0
 
     frame_n = 0
+    burst, loud_n, quiet_n = [], 0, 0             # short speech bursts, checked for a bare "stop"
     while True:
         f = mic.read()
         frame_n += 1
         level = rms(f)
         if level < noise * 2:                         # learn room noise only from quiet frames,
             noise = 0.98 * noise + 0.02 * level       # so speech does not raise the bar for speech
+        if level > max(noise * 3.0, 500.0):
+            burst.append(f); loud_n += 1; quiet_n = 0
+        elif burst:
+            burst.append(f); quiet_n += 1
+            if quiet_n >= 4:                          # ~0.3 s quiet: the burst is over
+                if STOP_MIN_FRAMES <= loud_n <= STOP_MAX_FRAMES and not stop_busy["on"]:
+                    stop_busy["on"] = True
+                    threading.Thread(target=check_stop, args=(list(burst),), daemon=True).start()
+                burst, loud_n, quiet_n = [], 0, 0
+        if len(burst) > STOP_MAX_FRAMES + 10:          # long talking: not a "stop"
+            burst, loud_n, quiet_n = [], 0, 0
         fired = wake.heard(f)
         pushed = PTT and frame_n % 3 == 0 and ptt_on()   # TALK pressed on the phone remote
         fired = fired or pushed
@@ -397,6 +439,10 @@ def main():
                 log("debug: loudest %.0f  noise %.0f  best wake score %.2f" % (loudest, noise, getattr(wake, "best", 0)))
                 loudest, wake.best = 0.0, 0.0
         if not fired:
+            continue
+        if not pushed and speaking_now():             # Jarvis said "Hey Jarvis" himself (invitations)
+            log("wake word ignored: that was my own voice")
+            wake.reset()
             continue
 
         claim = robot_media._pet("POST", "/voice_claim", {"who": WHO, "seconds": 60}, timeout=1)
